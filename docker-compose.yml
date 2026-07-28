@@ -1,0 +1,69 @@
+services:
+  db:
+    image: timescale/timescaledb:2.15.2-pg15
+    container_name: solar-monitor-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-solar_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-solar_dev_password}
+      POSTGRES_DB: ${DB_NAME:-solar_monitor}
+    ports:
+      # Host-side 5433 (not 5432) since a native Postgres install commonly
+      # already owns 5432 on the host; the backend container itself always
+      # talks to this service as db:5432 over the internal Docker network.
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-solar_admin} -d ${DB_NAME:-solar_monitor}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    container_name: solar-monitor-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-solar_admin}
+      DB_PASSWORD: ${DB_PASSWORD:-solar_dev_password}
+      DB_NAME: ${DB_NAME:-solar_monitor}
+      DB_SSLMODE: disable
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      POLL_INTERVAL: ${POLL_INTERVAL:-5m}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      USE_MOCK_ADAPTERS: ${USE_MOCK_ADAPTERS:-true}
+      DEYE_APP_ID: ${DEYE_APP_ID:-}
+      DEYE_APP_SECRET: ${DEYE_APP_SECRET:-}
+      DEYE_USERNAME: ${DEYE_USERNAME:-}
+      DEYE_PASSWORD: ${DEYE_PASSWORD:-}
+      DEYE_REGION: ${DEYE_REGION:-eu}
+      INGECON_API_KEY: ${INGECON_API_KEY:-}
+      INGECON_BASE_URL: ${INGECON_BASE_URL:-}
+      SOSEN_USERNAME: ${SOSEN_USERNAME:-}
+      SOSEN_PASSWORD: ${SOSEN_PASSWORD:-}
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:3000}
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: solar-monitor-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+
+volumes:
+  db_data:

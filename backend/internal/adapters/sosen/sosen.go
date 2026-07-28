@@ -1,0 +1,372 @@
+// Package sosen implements models.BrandAdapter for Sosen ("Inteless")
+// inverters. Contrary to the project brief's assumption that Sosen has no
+// public API and would need a browser-automation scraper, live inspection
+// of the sosen.inteless.com portal (with the account's own credentials)
+// found that the portal's dashboard itself is a thin client over a real
+// JSON REST API at https://pv.inteless.com — the same kind of API every
+// other brand adapter talks to. No scraping is needed at all.
+//
+// Endpoints and auth confirmed live against the real account:
+//   - POST https://pv.inteless.com/oauth/token
+//     Body (as JSON, NOT form-encoded, with Content-Type: application/json):
+//     {"grant_type":"password","username":"...","password":"..."}
+//     Response: {"code":0,"msg":"Success","success":true,
+//     "data":{"access_token","refresh_token","scope","token_type":"Bearer","expires_in"}}
+//     expires_in was observed as 7775999 seconds (~90 days), same order as
+//     Deye's token lifetime.
+//   - GET /api/v1/plants?page=&limit=&status=&type=&sortCol=&order=&countryCode=
+//     -> {"data":{"total","infos":[{"id","name","status","pac","efficiency",
+//     "etoday","etotal","address","updateAt","type"}]}} — status 1 == online,
+//     0 == offline, observed directly against 8 real plants.
+//   - GET /api/v1/plant/{id}/realtime?id={id}
+//     -> {"data":{"pac","etoday","emonth","eyear","etotal","gridPower",
+//     "batPower","storagePower","totalPower" (capacity kW),"efficiency"}}
+//   - GET /api/v1/plant/{id}/deviceCount?invType=
+//     -> {"data":{"warning","fault","total","normal","offline"}} — the
+//     authoritative per-plant device health signal.
+//   - GET /api/v1/plant/{id}/inverters?page=&limit=&status=&sn=&stationId={id}&type=
+//     -> per-plant inverter list (used to get an SN for battery lookup).
+//   - GET /api/v1/inverter/battery/{sn}/realtime?sn=&lan=en -> per-inverter
+//     battery SOC. Note: /api/v1/batt/plant/{id}/flag's "battStationFlag"
+//     looks like a "does this plant have a battery" signal but was observed
+//     live to be false on a plant whose dashboard showed an active battery
+//     at 54% SOC, so it is NOT used to gate this call — we just always try
+//     it and ignore failures/zero results.
+package sosen
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"sync"
+	"time"
+
+	"solar-monitor/internal/adapters"
+	"solar-monitor/internal/config"
+	"solar-monitor/internal/models"
+)
+
+const (
+	apiBaseURL      = "https://pv.inteless.com"
+	defaultTokenTTL = 60 * 24 * time.Hour
+)
+
+type Adapter struct {
+	cfg     config.SosenConfig
+	client  *http.Client
+	baseURL string
+
+	mu          sync.Mutex
+	accessToken string
+	tokenExpiry time.Time
+}
+
+func New(cfg config.SosenConfig) *Adapter {
+	return &Adapter{
+		cfg:     cfg,
+		client:  &http.Client{Timeout: 20 * time.Second},
+		baseURL: apiBaseURL,
+	}
+}
+
+func (a *Adapter) Name() string { return string(models.BrandSosen) }
+
+func (a *Adapter) RateLimit() (int, time.Duration) { return 60, time.Minute }
+
+type tokenResponse struct {
+	Code    int    `json:"code"`
+	Msg     string `json:"msg"`
+	Success bool   `json:"success"`
+	Data    struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		Scope        string `json:"scope"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int64  `json:"expires_in"`
+	} `json:"data"`
+}
+
+func (a *Adapter) authenticate(ctx context.Context) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.accessToken != "" && time.Now().Before(a.tokenExpiry.Add(-1*time.Hour)) {
+		return a.accessToken, nil
+	}
+
+	payload, _ := json.Marshal(map[string]string{
+		"grant_type": "password",
+		"username":   a.cfg.Username,
+		"password":   a.cfg.Password,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/oauth/token", bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("sosen: build token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("sosen: token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("sosen: read token response: %w", err)
+	}
+
+	var tok tokenResponse
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return "", fmt.Errorf("sosen: decode token response: %w", err)
+	}
+	if !tok.Success || tok.Data.AccessToken == "" {
+		return "", fmt.Errorf("sosen: auth rejected: %s", tok.Msg)
+	}
+
+	ttl := defaultTokenTTL
+	if tok.Data.ExpiresIn > 0 {
+		ttl = time.Duration(tok.Data.ExpiresIn) * time.Second
+	}
+
+	a.accessToken = tok.Data.AccessToken
+	a.tokenExpiry = time.Now().Add(ttl)
+	return a.accessToken, nil
+}
+
+func (a *Adapter) ValidateCredentials(ctx context.Context) error {
+	_, err := a.authenticate(ctx)
+	return err
+}
+
+type apiEnvelope struct {
+	Code    int             `json:"code"`
+	Msg     string          `json:"msg"`
+	Success bool            `json:"success"`
+	Data    json.RawMessage `json:"data"`
+}
+
+// get performs an authenticated GET against the Sosen/Inteless API and
+// returns the raw "data" payload.
+func (a *Adapter) get(ctx context.Context, path string) ([]byte, error) {
+	token, err := a.authenticate(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("returned %d: %s", resp.StatusCode, string(raw))
+	}
+
+	var env apiEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, fmt.Errorf("decode envelope: %w", err)
+	}
+	if !env.Success {
+		return nil, fmt.Errorf("api error: %s", env.Msg)
+	}
+	return env.Data, nil
+}
+
+type plantSummary struct {
+	ID         int64   `json:"id"`
+	Name       string  `json:"name"`
+	Status     int     `json:"status"` // 1 = online, 0 = offline
+	Pac        float64 `json:"pac"`
+	Efficiency float64 `json:"efficiency"`
+	Etoday     float64 `json:"etoday"`
+	Etotal     float64 `json:"etotal"`
+	Address    string  `json:"address"`
+}
+
+type plantListData struct {
+	Total int            `json:"total"`
+	Infos []plantSummary `json:"infos"`
+}
+
+func (a *Adapter) listPlants(ctx context.Context) ([]plantSummary, error) {
+	raw, err := a.get(ctx, "/api/v1/plants?page=1&limit=200&status=&type=&sortCol=&order=&countryCode=")
+	if err != nil {
+		return nil, fmt.Errorf("plant list: %w", err)
+	}
+	var data plantListData
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return nil, fmt.Errorf("plant list: decode: %w", err)
+	}
+	return data.Infos, nil
+}
+
+// Describe implements adapters.SiteDescriber from the same plant list call.
+func (a *Adapter) Describe(ctx context.Context) ([]adapters.SiteDescriptor, error) {
+	plants, err := a.listPlants(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sosen: %w", err)
+	}
+	out := make([]adapters.SiteDescriptor, 0, len(plants))
+	for _, p := range plants {
+		out = append(out, adapters.SiteDescriptor{
+			BrandSiteID: strconv.FormatInt(p.ID, 10),
+			Name:        p.Name,
+			Location:    p.Address,
+		})
+	}
+	return out, nil
+}
+
+type plantRealtime struct {
+	Pac          float64 `json:"pac"`
+	Etoday       float64 `json:"etoday"`
+	Etotal       float64 `json:"etotal"`
+	GridPower    float64 `json:"gridPower"`
+	BatPower     float64 `json:"batPower"`
+	StoragePower float64 `json:"storagePower"`
+	TotalPower   float64 `json:"totalPower"` // capacity, kW
+	Efficiency   float64 `json:"efficiency"`
+}
+
+type deviceCount struct {
+	Warning int `json:"warning"`
+	Fault   int `json:"fault"`
+	Total   int `json:"total"`
+	Normal  int `json:"normal"`
+	Offline int `json:"offline"`
+}
+
+type inverterSummary struct {
+	SN string `json:"sn"`
+}
+
+type inverterListData struct {
+	Infos []inverterSummary `json:"infos"`
+}
+
+type inverterBattery struct {
+	// SOC is returned as a JSON string (e.g. "60.0"), not a number —
+	// confirmed live against the real API.
+	SOC string `json:"soc"`
+}
+
+// FetchAll lists every plant on the account and enriches each with its
+// realtime power/grid/battery reading and device health counts.
+func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
+	plants, err := a.listPlants(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sosen: %w", err)
+	}
+
+	out := make([]models.SiteData, 0, len(plants))
+	for _, p := range plants {
+		id := strconv.FormatInt(p.ID, 10)
+		data, err := a.fetchPlantData(ctx, p)
+		if err != nil {
+			out = append(out, models.SiteData{BrandSiteID: id, Timestamp: time.Now(), Status: models.StatusOffline})
+			continue
+		}
+		out = append(out, data)
+	}
+	return out, nil
+}
+
+func (a *Adapter) fetchPlantData(ctx context.Context, p plantSummary) (models.SiteData, error) {
+	id := strconv.FormatInt(p.ID, 10)
+
+	status := models.StatusOnline
+	if p.Status == 0 {
+		status = models.StatusOffline
+	}
+
+	data := models.SiteData{
+		BrandSiteID: id,
+		Timestamp:   time.Now(),
+		Power:       p.Pac,
+		EnergyToday: p.Etoday,
+		EnergyTotal: p.Etotal,
+		Status:      status,
+	}
+
+	if raw, err := a.get(ctx, "/api/v1/plant/"+id+"/realtime?id="+id); err == nil {
+		var rt plantRealtime
+		if json.Unmarshal(raw, &rt) == nil {
+			grid := rt.GridPower
+			load := rt.Pac - rt.GridPower // best-effort; Sosen has no direct load field
+			data.GridPower = &grid
+			data.LoadPower = &load
+			data.Raw = raw
+		}
+	}
+
+	// deviceCount is the authoritative per-plant health signal: any fault
+	// escalates status regardless of what the plant-list summary said.
+	if raw, err := a.get(ctx, "/api/v1/plant/"+id+"/deviceCount?invType="); err == nil {
+		var dc deviceCount
+		if json.Unmarshal(raw, &dc) == nil {
+			if dc.Fault > 0 {
+				data.Status = models.StatusError
+			} else if dc.Warning > 0 && data.Status == models.StatusOnline {
+				data.Status = models.StatusWarning
+			} else if dc.Offline > 0 && dc.Normal == 0 {
+				data.Status = models.StatusOffline
+			}
+		}
+	}
+
+	// Battery SOC requires looking up the plant's inverter SN. Note:
+	// /api/v1/batt/plant/{id}/flag's "battStationFlag" was observed live to
+	// be false on a plant whose own dashboard showed an active battery at
+	// 54% SOC — it does NOT reliably mean "has battery hardware" (it may
+	// track a separate multi-inverter "battery station" grouping feature
+	// instead). So we always attempt the SOC lookup and simply ignore it
+	// when the call fails or returns nothing, rather than gating on that
+	// flag.
+	if soc, ok := a.fetchBatterySOC(ctx, id); ok {
+		data.SOC = &soc
+	}
+
+	return data, nil
+}
+
+func (a *Adapter) fetchBatterySOC(ctx context.Context, plantID string) (float64, bool) {
+	raw, err := a.get(ctx, "/api/v1/plant/"+plantID+"/inverters?page=1&limit=1&status=&sn=&stationId="+plantID+"&type=")
+	if err != nil {
+		return 0, false
+	}
+	var invs inverterListData
+	if json.Unmarshal(raw, &invs) != nil || len(invs.Infos) == 0 {
+		return 0, false
+	}
+	sn := invs.Infos[0].SN
+
+	raw, err = a.get(ctx, "/api/v1/inverter/battery/"+sn+"/realtime?sn="+sn+"&lan=en")
+	if err != nil {
+		return 0, false
+	}
+	var bat inverterBattery
+	if json.Unmarshal(raw, &bat) != nil {
+		return 0, false
+	}
+	soc, err := strconv.ParseFloat(bat.SOC, 64)
+	if err != nil {
+		return 0, false
+	}
+	return soc, true
+}
