@@ -1,7 +1,11 @@
 package api
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -11,14 +15,14 @@ import (
 )
 
 type createSiteRequest struct {
-	Name                string   `json:"name"`
-	Brand               string   `json:"brand"`
-	BrandSiteID         string   `json:"brand_site_id"`
-	Location            string   `json:"location"`
-	Latitude            *float64 `json:"latitude"`
-	Longitude           *float64 `json:"longitude"`
-	CapacityKW          float64  `json:"capacity_kw"`
-	InstallerAccountID  string   `json:"installer_account_id"`
+	Name               string   `json:"name"`
+	Brand              string   `json:"brand"`
+	BrandSiteID        string   `json:"brand_site_id"`
+	Location           string   `json:"location"`
+	Latitude           *float64 `json:"latitude"`
+	Longitude          *float64 `json:"longitude"`
+	CapacityKW         float64  `json:"capacity_kw"`
+	InstallerAccountID string   `json:"installer_account_id"`
 }
 
 func (d *Deps) handleCreateSite(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +38,21 @@ func (d *Deps) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 	brand := models.Brand(req.Brand)
 	if brand != models.BrandDeye && brand != models.BrandIngecon && brand != models.BrandSosen {
 		writeError(w, http.StatusBadRequest, "brand must be one of: deye, ingecon, sosen")
+		return
+	}
+
+	// Verify the brand_site_id actually exists on the vendor account.
+	//
+	// Without this the form is a silent footgun: a typo produces a site row
+	// that no telemetry will ever resolve to, so it sits in the fleet
+	// permanently blank with nothing anywhere indicating why. ResolveSite
+	// looks up (brand, brand_site_id) and simply never matches.
+	//
+	// Skipped when the brand has no describer or the check itself fails —
+	// a vendor API outage must not block an operator from registering a
+	// site they can see with their own eyes in the portal.
+	if err := d.validateBrandSiteID(r.Context(), brand, req.BrandSiteID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -154,4 +173,40 @@ func (d *Deps) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	d.Audit.Log(r.Context(), actor.ID, "user.create", "user", user.ID, map[string]string{"email": req.Email, "role": req.Role})
 
 	writeJSON(w, http.StatusCreated, user)
+}
+
+// validateBrandSiteID checks a brand_site_id against the vendor's own
+// plant list before we create a row keyed on it.
+//
+// Returns nil (allow) when the brand exposes no describer, or when the
+// vendor lookup itself fails — a portal outage should not stop an operator
+// registering a plant they are looking at. It only rejects when we
+// successfully retrieved the plant list and the ID genuinely isn't in it,
+// which is the case that would otherwise produce a permanently blank site.
+func (d *Deps) validateBrandSiteID(ctx context.Context, brand models.Brand, brandSiteID string) error {
+	describer, ok := d.Describers[brand]
+	if !ok || describer == nil {
+		return nil
+	}
+
+	// Bounded independently of the request: the admin form should fail
+	// fast rather than hang on a slow vendor.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	descriptors, err := describer.Describe(ctx)
+	if err != nil {
+		slog.Warn("could not validate brand_site_id; allowing creation",
+			"brand", brand, "brand_site_id", brandSiteID, "error", err)
+		return nil
+	}
+
+	for _, desc := range descriptors {
+		if desc.BrandSiteID == brandSiteID {
+			return nil
+		}
+	}
+	return fmt.Errorf("no plant with id %q exists on the %s account; "+
+		"copy the id from the %s portal, or leave it to auto-discovery",
+		brandSiteID, brand, brand)
 }

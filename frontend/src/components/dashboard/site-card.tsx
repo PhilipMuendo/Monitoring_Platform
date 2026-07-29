@@ -5,13 +5,36 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { BrandBadge } from "@/components/brand-badge";
 import { StatusBadge } from "@/components/status-badge";
-import { formatPower, formatRelativeTime } from "@/lib/format";
+import { formatCapacity, formatPower, formatRelativeTime } from "@/lib/format";
+import { socIndicatorClass } from "@/lib/soc-color";
+import { cn } from "@/lib/utils";
 import type { SiteWithStatus } from "@/lib/types";
+
+// A faulted or offline site has to be findable in a wall of 50 cards without
+// reading any text, so status drives a left accent bar and a faint tint —
+// not just the small status dot, which disappears at a glance.
+const STATUS_ACCENT: Record<SiteWithStatus["status"], string> = {
+  online: "border-l-transparent",
+  warning: "border-l-status-warning bg-status-warning/[0.04]",
+  error: "border-l-status-critical bg-status-critical/[0.06]",
+  offline: "border-l-status-offline bg-muted/40",
+  // Muted, not alarming. "We couldn't reach the vendor" and "not yet
+  // commissioned" are both absence of information rather than faults, and
+  // tinting them like a problem is what the status split exists to avoid.
+  unknown: "border-l-status-offline bg-muted/20",
+  commissioning: "border-l-status-offline bg-muted/20",
+};
 
 export function SiteCard({ site }: { site: SiteWithStatus }) {
   return (
-    <Link href={`/sites/${site.id}`}>
-      <Card className="gap-2 py-4 transition-colors hover:bg-accent/50">
+    <Link href={`/sites/${site.id}`} className="group block">
+      <Card
+        className={cn(
+          "gap-2 border-l-[3px] py-4 transition-all duration-200",
+          "group-hover:-translate-y-0.5 group-hover:border-border/80 group-hover:shadow-md",
+          STATUS_ACCENT[site.status],
+        )}
+      >
         <CardContent className="px-4">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -29,7 +52,7 @@ export function SiteCard({ site }: { site: SiteWithStatus }) {
           {site.soc != null && (
             <div className="mt-2 flex items-center gap-2">
               <BatteryCharging className="size-3.5 shrink-0 text-battery" />
-              <Progress value={site.soc} className="h-1.5" />
+              <Progress value={site.soc} className="h-1.5" indicatorClassName={socIndicatorClass(site.soc)} />
               <span className="w-9 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                 {Math.round(site.soc)}%
               </span>
@@ -37,7 +60,7 @@ export function SiteCard({ site }: { site: SiteWithStatus }) {
           )}
 
           <p className="mt-2 text-[10px] text-muted-foreground">
-            {site.capacity_kw.toFixed(1)} kW · last seen {formatRelativeTime(site.last_seen_at)}
+            {formatCapacity(site.capacity_kw)} · last seen {formatRelativeTime(site.last_seen_at)}
           </p>
         </CardContent>
       </Card>

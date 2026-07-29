@@ -15,7 +15,7 @@
 │  ┌────────────┐   ┌──────────────┐   ┌───────────────┐   ┌─────────────┐ │
 │  │ Scheduler  │──▶│  Collector    │──▶│ BrandAdapters │──▶│  Normalizer │ │
 │  │ (ticker)   │   │ (fan-out,     │   │ Deye/Ingecon/ │   │ (SiteData)  │ │
-│  │            │   │  bounded conc.)│   │ Sosen/Mock    │   │             │ │
+│  │            │   │  bounded conc.)│   │ Sosen         │   │             │ │
 │  └────────────┘   └──────────────┘   └───────────────┘   └──────┬──────┘ │
 │                                                                    │        │
 │                                                                    ▼        │
@@ -67,9 +67,10 @@ type BrandAdapter interface {
 ```
 
 - **Deye**: real HTTPS client implementing DeyeCloud's documented flow (SHA-256 password hash → `/account/token` → bearer token cached until its 60-day expiry, auto-refreshed).
-- **Ingecon**: adapter skeleton with the same interface and a clearly marked integration point, ready to fill in once their API documentation/credentials are confirmed — the rest of the system doesn't care.
-- **Sosen**: no public API exists today. The adapter is structured so a Playwright/chromedp-driven scraper can be dropped in behind the exact same interface without touching collector, storage, or the frontend — isolated and replaceable, per the brief's contingency plan.
-- **Mock**: a fourth adapter that generates realistic synthetic readings (day/night PV curves, battery charge/discharge, occasional faults) for 50 demo sites split across all three brands. This is what runs by default (`USE_MOCK_ADAPTERS=true`) so the whole product — dashboard, alerts, charts, wall display — is demoable with zero external credentials. Swapping to real adapters is one env var.
+- **Ingecon**: real HTTPS client against the Ingecon Sun Monitor API (`X-API-KEY` header), dispatching per plant type (`pv` / `sc`) and throttled to the documented rate limit.
+- **Sosen**: real HTTPS client against `pv.inteless.com` — the JSON API the Sosen/Inteless portal itself is built on. The brief assumed this brand would need browser-automation scraping; live inspection found a proper REST API, so no scraper exists or is needed.
+
+All three are polled only when their credentials are present in the environment; an unconfigured brand is never registered with the collector. There is no mock or demo adapter — every row in `site_metrics` came from a real inverter portal.
 
 ## 3. Frontend architecture
 
@@ -89,9 +90,9 @@ Design system: Tailwind + shadcn/ui primitives (Card, Badge, Button, Table, Dial
 ## 4. Data flow (per 5-minute cycle)
 
 1. Scheduler tick fires.
-2. Collector fans out to every active adapter (mock or real) concurrently, bounded to `N` in flight.
+2. Collector fans out to every configured brand adapter concurrently, bounded to `N` in flight.
 3. Each adapter returns `[]SiteData` already normalized to the unified model.
-4. Storage upserts current status into `sites`/`site_status` and inserts rows into the `site_metrics` hypertable.
+4. Storage writes `site_status` and `site_metrics` in **one transaction** — they are two representations of the same observation, and a crash between them left the dashboard and the charts disagreeing with nothing to say which was right. A cycle that failed to read a site updates the status only: a failed read is not a data point, and recording one would push a phantom row into every chart and into the production-drop rule's window.
 5. Alert engine evaluates rules against each site's recent window; new/resolved alerts are written to `alerts` and pushed over SSE.
 6. Frontend's next poll (or the SSE push) picks up the new state; problem sites re-sort to the top automatically because the query is sorted server-side by severity-then-time.
 
@@ -108,7 +109,10 @@ Single VPS, Docker Compose, three containers (db, backend, frontend) behind a re
 | 3 | 5-minute polling | Balances freshness vs. brand API rate limits |
 | 4 | State-based alerting with cooldowns | Avoids alert fatigue from transient blips |
 | 5 | Self-hosted JWT auth instead of Clerk | Keeps the tool actually self-hosted, no external SaaS dependency for an internal tool |
-| 6 | Mock adapter as default | Makes the full product demoable/testable before real credentials exist |
+| 6a | `unknown` is a first-class status, distinct from `offline` | A failed vendor call says nothing about the site. Folding the two together meant one flaky HTTP request could raise a critical alert, which is the fastest route to an on-call rota that ignores this system. Nothing alerts on `unknown`, and an unreachable cycle never resolves an existing alert either |
+| 6b | Retry, backoff and rate-limit handling live in one transport (`adapters/httpjson`) | Retry policy is a cross-cutting decision, not a per-brand one. Full jitter rather than fixed exponential, because lockstep backoff turns a brief vendor wobble into a self-inflicted thundering herd |
+| 6c | Every telemetry channel is nullable | "The vendor did not report PV power" and "the array is producing 0 W" are different facts. Flattening them produced offline sites displaying a stale 1.6 kW, and would poison any performance-ratio maths |
+| 6 | Live inverter data only — no mock adapter, no history seeding | An operations tool is judged on whether its numbers are trustworthy; synthetic readings sitting in the same tables as real ones make "is this site actually down?" unanswerable. A fresh install shows empty charts until polling fills them, which is the honest state |
 | 7 | Go single binary backend | Cheap concurrency for fan-out polling, trivial deployment |
 | 8 | Next.js + shadcn/ui frontend | Accessible, fast to build, matches brief |
 | 9 | Adapter interface isolates brand quirks | Sosen scraper (or Ingecon once confirmed) drops in without touching core logic |

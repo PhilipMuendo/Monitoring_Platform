@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -9,14 +10,38 @@ import (
 	"solar-monitor/internal/storage"
 )
 
+// handleListSites returns a page of sites.
+//
+// Paged rather than unbounded: both the dashboard and the wall display
+// refetch this every poll interval, so an unbounded response puts the
+// entire fleet on the wire twice per cycle per viewer. `total` comes back
+// alongside so the client can page without a second call.
 func (d *Deps) handleListSites(w http.ResponseWriter, r *http.Request) {
-	activeOnly := r.URL.Query().Get("all") != "true"
-	sites, err := d.Sites.List(r.Context(), activeOnly)
+	page, err := d.Sites.List(r.Context(), storage.ListParams{
+		ActiveOnly: r.URL.Query().Get("all") != "true",
+		Limit:      queryInt(r, "limit", 0),
+		Offset:     queryInt(r, "offset", 0),
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list sites")
 		return
 	}
-	writeJSON(w, http.StatusOK, sites)
+	writeJSON(w, http.StatusOK, page)
+}
+
+// queryInt reads a bounded integer query parameter, falling back on
+// anything unparseable rather than erroring — a malformed ?limit= should
+// serve a sensible page, not a 400.
+func queryInt(r *http.Request, key string, fallback int) int {
+	raw := r.URL.Query().Get(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 func (d *Deps) handleFleetSummary(w http.ResponseWriter, r *http.Request) {
@@ -61,11 +86,11 @@ func (d *Deps) handleSiteHistory(w http.ResponseWriter, r *http.Request) {
 
 	switch rng {
 	case "24h":
-		points, err = d.Metrics.History24h(r.Context(), id)
+		points, err = d.SiteMetrics.History24h(r.Context(), id)
 	case "7d":
-		points, err = d.Metrics.HistoryHourly(r.Context(), id, 7*24*time.Hour)
+		points, err = d.SiteMetrics.HistoryHourly(r.Context(), id, 7*24*time.Hour)
 	case "30d":
-		points, err = d.Metrics.HistoryHourly(r.Context(), id, 30*24*time.Hour)
+		points, err = d.SiteMetrics.HistoryHourly(r.Context(), id, 30*24*time.Hour)
 	default:
 		writeError(w, http.StatusBadRequest, "range must be one of: 24h, 7d, 30d")
 		return

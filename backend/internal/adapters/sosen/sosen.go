@@ -35,17 +35,16 @@
 package sosen
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
 	"solar-monitor/internal/adapters"
+	"solar-monitor/internal/adapters/httpjson"
 	"solar-monitor/internal/config"
 	"solar-monitor/internal/models"
 )
@@ -57,20 +56,19 @@ const (
 
 type Adapter struct {
 	cfg     config.SosenConfig
-	client  *http.Client
+	client  *httpjson.Client
 	baseURL string
-
-	mu          sync.Mutex
-	accessToken string
-	tokenExpiry time.Time
+	tokens  *httpjson.TokenCache
 }
 
-func New(cfg config.SosenConfig) *Adapter {
-	return &Adapter{
+func New(cfg config.SosenConfig, hooks httpjson.Hooks) *Adapter {
+	a := &Adapter{
 		cfg:     cfg,
-		client:  &http.Client{Timeout: 20 * time.Second},
+		client:  httpjson.New(string(models.BrandSosen), httpjson.Defaults(), hooks),
 		baseURL: apiBaseURL,
 	}
+	a.tokens = httpjson.NewTokenCache(time.Hour, a.fetchToken)
+	return a
 }
 
 func (a *Adapter) Name() string { return string(models.BrandSosen) }
@@ -90,56 +88,38 @@ type tokenResponse struct {
 	} `json:"data"`
 }
 
-func (a *Adapter) authenticate(ctx context.Context) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.accessToken != "" && time.Now().Before(a.tokenExpiry.Add(-1*time.Hour)) {
-		return a.accessToken, nil
-	}
-
-	payload, _ := json.Marshal(map[string]string{
-		"grant_type": "password",
-		"username":   a.cfg.Username,
-		"password":   a.cfg.Password,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/oauth/token", bytes.NewReader(payload))
-	if err != nil {
-		return "", fmt.Errorf("sosen: build token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("sosen: token request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("sosen: read token response: %w", err)
-	}
-
+// fetchToken authenticates against the portal's OAuth endpoint. Note the
+// body is JSON, not form-encoded — confirmed live; form encoding is
+// rejected. Caching, expiry and single-flight refresh live in
+// httpjson.TokenCache.
+func (a *Adapter) fetchToken(ctx context.Context) (string, time.Duration, error) {
 	var tok tokenResponse
-	if err := json.Unmarshal(raw, &tok); err != nil {
-		return "", fmt.Errorf("sosen: decode token response: %w", err)
+	_, err := a.client.Do(ctx, httpjson.Request{
+		Method:   http.MethodPost,
+		URL:      a.baseURL + "/oauth/token",
+		Endpoint: "/oauth/token",
+		Body: map[string]string{
+			"grant_type": "password",
+			"username":   a.cfg.Username,
+			"password":   a.cfg.Password,
+		},
+	}, &tok)
+	if err != nil {
+		return "", 0, fmt.Errorf("sosen: token request: %w", err)
 	}
 	if !tok.Success || tok.Data.AccessToken == "" {
-		return "", fmt.Errorf("sosen: auth rejected: %s", tok.Msg)
+		return "", 0, fmt.Errorf("sosen: auth rejected: %s", tok.Msg)
 	}
 
 	ttl := defaultTokenTTL
 	if tok.Data.ExpiresIn > 0 {
 		ttl = time.Duration(tok.Data.ExpiresIn) * time.Second
 	}
-
-	a.accessToken = tok.Data.AccessToken
-	a.tokenExpiry = time.Now().Add(ttl)
-	return a.accessToken, nil
+	return tok.Data.AccessToken, ttl, nil
 }
 
 func (a *Adapter) ValidateCredentials(ctx context.Context) error {
-	_, err := a.authenticate(ctx)
+	_, err := a.tokens.Get(ctx)
 	return err
 }
 
@@ -152,35 +132,30 @@ type apiEnvelope struct {
 
 // get performs an authenticated GET against the Sosen/Inteless API and
 // returns the raw "data" payload.
-func (a *Adapter) get(ctx context.Context, path string) ([]byte, error) {
-	token, err := a.authenticate(ctx)
+//
+// Every Sosen response is wrapped in a {code,msg,success,data} envelope, so
+// a 200 with success:false is still a failure — unwrapped here so callers
+// only ever see the payload.
+func (a *Adapter) get(ctx context.Context, endpoint, path string) ([]byte, error) {
+	token, err := a.tokens.Get(ctx)
 	if err != nil {
 		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("returned %d: %s", resp.StatusCode, string(raw))
 	}
 
 	var env apiEnvelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, fmt.Errorf("decode envelope: %w", err)
+	_, err = a.client.Do(ctx, httpjson.Request{
+		Method:   http.MethodGet,
+		URL:      a.baseURL + path,
+		Endpoint: endpoint,
+		Header:   http.Header{"Authorization": []string{"Bearer " + token}},
+	}, &env)
+	if err != nil {
+		if httpjson.Unauthorized(err) {
+			// Token revoked early; force re-auth on the next call rather
+			// than replaying a token the vendor has already rejected.
+			a.tokens.Invalidate()
+		}
+		return nil, err
 	}
 	if !env.Success {
 		return nil, fmt.Errorf("api error: %s", env.Msg)
@@ -205,7 +180,7 @@ type plantListData struct {
 }
 
 func (a *Adapter) listPlants(ctx context.Context) ([]plantSummary, error) {
-	raw, err := a.get(ctx, "/api/v1/plants?page=1&limit=200&status=&type=&sortCol=&order=&countryCode=")
+	raw, err := a.get(ctx, "/api/v1/plants", "/api/v1/plants?page=1&limit=200&status=&type=&sortCol=&order=&countryCode=")
 	if err != nil {
 		return nil, fmt.Errorf("plant list: %w", err)
 	}
@@ -279,7 +254,11 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 		id := strconv.FormatInt(p.ID, 10)
 		data, err := a.fetchPlantData(ctx, p)
 		if err != nil {
-			out = append(out, models.SiteData{BrandSiteID: id, Timestamp: time.Now(), Status: models.StatusOffline})
+			// Unknown, not Offline: we failed to read the plant, which says
+			// nothing about whether the plant is running. Offline is what
+			// the alert engine escalates to a critical.
+			slog.Warn("sosen: plant telemetry unavailable", "plant", id, "error", err)
+			out = append(out, models.SiteData{BrandSiteID: id, Timestamp: time.Now(), Status: models.StatusUnknown})
 			continue
 		}
 		out = append(out, data)
@@ -295,16 +274,17 @@ func (a *Adapter) fetchPlantData(ctx context.Context, p plantSummary) (models.Si
 		status = models.StatusOffline
 	}
 
+	pac, etoday, etotal := p.Pac, p.Etoday, p.Etotal
 	data := models.SiteData{
 		BrandSiteID: id,
 		Timestamp:   time.Now(),
-		Power:       p.Pac,
-		EnergyToday: p.Etoday,
-		EnergyTotal: p.Etotal,
+		Power:       &pac,
+		EnergyToday: &etoday,
+		EnergyTotal: &etotal,
 		Status:      status,
 	}
 
-	if raw, err := a.get(ctx, "/api/v1/plant/"+id+"/realtime?id="+id); err == nil {
+	if raw, err := a.get(ctx, "/api/v1/plant/{id}/realtime", "/api/v1/plant/"+id+"/realtime?id="+id); err == nil {
 		var rt plantRealtime
 		if json.Unmarshal(raw, &rt) == nil {
 			grid := rt.GridPower
@@ -317,7 +297,7 @@ func (a *Adapter) fetchPlantData(ctx context.Context, p plantSummary) (models.Si
 
 	// deviceCount is the authoritative per-plant health signal: any fault
 	// escalates status regardless of what the plant-list summary said.
-	if raw, err := a.get(ctx, "/api/v1/plant/"+id+"/deviceCount?invType="); err == nil {
+	if raw, err := a.get(ctx, "/api/v1/plant/{id}/deviceCount", "/api/v1/plant/"+id+"/deviceCount?invType="); err == nil {
 		var dc deviceCount
 		if json.Unmarshal(raw, &dc) == nil {
 			if dc.Fault > 0 {
@@ -346,7 +326,7 @@ func (a *Adapter) fetchPlantData(ctx context.Context, p plantSummary) (models.Si
 }
 
 func (a *Adapter) fetchBatterySOC(ctx context.Context, plantID string) (float64, bool) {
-	raw, err := a.get(ctx, "/api/v1/plant/"+plantID+"/inverters?page=1&limit=1&status=&sn=&stationId="+plantID+"&type=")
+	raw, err := a.get(ctx, "/api/v1/plant/{id}/inverters", "/api/v1/plant/"+plantID+"/inverters?page=1&limit=1&status=&sn=&stationId="+plantID+"&type=")
 	if err != nil {
 		return 0, false
 	}
@@ -356,7 +336,7 @@ func (a *Adapter) fetchBatterySOC(ctx context.Context, plantID string) (float64,
 	}
 	sn := invs.Infos[0].SN
 
-	raw, err = a.get(ctx, "/api/v1/inverter/battery/"+sn+"/realtime?sn="+sn+"&lan=en")
+	raw, err = a.get(ctx, "/api/v1/inverter/battery/{sn}/realtime", "/api/v1/inverter/battery/"+sn+"/realtime?sn="+sn+"&lan=en")
 	if err != nil {
 		return 0, false
 	}

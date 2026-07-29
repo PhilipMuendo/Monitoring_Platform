@@ -1,75 +1,115 @@
 "use client";
 
 import { Html } from "@react-three/drei";
+import { useFrame, useThree } from "@react-three/fiber";
+import { useMemo, useRef } from "react";
+import * as THREE from "three";
 
-import { cn } from "@/lib/utils";
+import { STUDIO_INK } from "@/lib/power-flow-colors";
 
 interface PowerFlowCallout3DProps {
   anchor: [number, number, number];
   label: string;
   value: string;
   sublabel?: string;
-  /** Tailwind text-color class for the value, e.g. "text-solar". */
-  colorClass: string;
-  /** "top": text above, dashed line drops down to the component.
-   *  "bottom": dashed line rises to the component, text below. */
-  placement?: "top" | "bottom";
-  /** length of the dashed connector in px. */
-  lineLength?: number;
+  /**
+   * Accent for this quantity, from POWER_FLOW_COLORS.light — not a theme
+   * class. These labels sit on the scene's fixed-light studio background in
+   * both themes, so a `text-solar` class would resolve to the dark-mode
+   * amber (L=0.8) and render at ~1.6:1 on a near-white canvas.
+   *
+   * Used only for the small marker dot. See the note on the value colour.
+   */
+  color: string;
+  /** Minimum leader length in px, so a high anchor still gets a visible stem. */
+  minLineLength?: number;
+  /**
+   * Horizontal nudge in screen px, applied to the label block only — the
+   * leader line stays anchored to the component.
+   *
+   * Needed because pinning every label to one baseline row puts four
+   * variable-width text blocks on the same line, and anchors that are well
+   * separated in world space can still project close enough together for
+   * "charging 33.1 kW" to run into the next readout. A px nudge is stable
+   * across camera zoom because both it and the label live in screen space.
+   */
+  offsetX?: number;
 }
 
-// Minimalist data callout: a thin dashed vertical line connecting a small
-// text block (label + value) directly to a component in the scene —
-// replacing the bulky floating icon badges. Rendered as screen-space HTML
-// via drei's <Html> so text stays crisp and always readable.
+/**
+ * Screen-space Y (px from the top of the canvas) that every callout's text
+ * block is pinned to. Chosen to clear the fleet-count overlay in the corner
+ * while leaving the tallest anchor — the roof-mounted solar array — a
+ * visible leader.
+ */
+const BASELINE_Y = 64;
+
+// Minimalist data callout: a thin dashed vertical leader connecting a text
+// block to a component in the scene.
+//
+// The leader length is computed per frame from the anchor's projected screen
+// position rather than hardcoded, so all four labels sit on one horizontal
+// band no matter how the camera reframes. Previously each callout carried a
+// fixed pixel length, which put the four labels at four different heights
+// and made the eye hunt for them; the reference render aligns them into a
+// single row across the top and is markedly easier to read for it.
 export function PowerFlowCallout3D({
   anchor,
   label,
   value,
   sublabel,
-  colorClass,
-  placement = "top",
-  lineLength = 42,
+  color,
+  minLineLength = 18,
+  offsetX = 0,
 }: PowerFlowCallout3DProps) {
-  const isTop = placement === "top";
+  const lineRef = useRef<HTMLDivElement>(null);
+  const { camera, size } = useThree();
+  const anchorVec = useMemo(() => new THREE.Vector3(...anchor), [anchor]);
+  const projected = useMemo(() => new THREE.Vector3(), []);
 
-  const textBlock = (
-    <div className="flex flex-col items-center leading-tight">
-      <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
-      <span className={cn("font-mono text-[13px] font-semibold tabular-nums", colorClass)}>{value}</span>
-      {sublabel && <span className="text-[9px] text-muted-foreground">{sublabel}</span>}
-    </div>
-  );
+  useFrame(() => {
+    const el = lineRef.current;
+    if (!el) return;
 
-  // A small gap separates the text from the leader line so labels never
-  // sit right on top of their endpoint.
-  const line = (
-    <div className={cn("flex flex-col items-center", isTop ? "pt-1.5" : "pb-1.5")}>
-      <div className="w-0 border-l border-dashed border-muted-foreground/45" style={{ height: lineLength }} />
-    </div>
-  );
+    // Project to NDC, then to pixels from the top of the canvas.
+    projected.copy(anchorVec).project(camera);
+    const anchorY = ((1 - projected.y) / 2) * size.height;
+
+    const length = Math.max(minLineLength, anchorY - BASELINE_Y);
+    el.style.height = `${length}px`;
+  });
 
   return (
     <Html position={anchor} transform={false} pointerEvents="none">
       <div
         className="flex flex-col items-center"
         style={{
-          transform: isTop ? "translate(-50%, -100%)" : "translate(-50%, 0)",
+          transform: `translate(calc(-50% + ${offsetX}px), -100%)`,
           whiteSpace: "nowrap",
           pointerEvents: "none",
         }}
       >
-        {isTop ? (
-          <>
-            {textBlock}
-            {line}
-          </>
-        ) : (
-          <>
-            {line}
-            {textBlock}
-          </>
-        )}
+        <div className="flex flex-col items-center leading-tight">
+          <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider" style={{ color: STUDIO_INK.muted }}>
+            {/* The accent survives as a 4px dot rather than tinting the whole
+                readout. Four saturated values at once made the overlay look
+                like a chart legend; the reference spends its colour budget on
+                a single glyph and renders every number in near-black. */}
+            <span aria-hidden className="inline-block size-1 rounded-full" style={{ backgroundColor: color }} />
+            {label}
+          </span>
+          <span className="font-mono text-[13px] font-semibold tabular-nums" style={{ color: STUDIO_INK.strong }}>
+            {value}
+          </span>
+          {sublabel && (
+            <span className="text-[9px]" style={{ color: STUDIO_INK.muted }}>
+              {sublabel}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-col items-center pt-1.5">
+          <div ref={lineRef} className="w-0 border-l border-dashed" style={{ height: minLineLength, borderColor: STUDIO_INK.line }} />
+        </div>
       </div>
     </Html>
   );

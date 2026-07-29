@@ -1,7 +1,11 @@
 // Mirrors backend/internal/models/models.go's JSON shapes exactly —
 // field names and optionality must stay in sync with that file.
 
-export type SiteStatus = "online" | "offline" | "warning" | "error";
+// "unknown" and "commissioning" describe the state of our knowledge, not
+// the state of the site: unknown means the vendor API was unreachable this
+// cycle, commissioning means the site has never reported yet. Neither
+// raises an alert, and neither should be presented as an outage.
+export type SiteStatus = "online" | "offline" | "warning" | "error" | "unknown" | "commissioning";
 export type Brand = "deye" | "ingecon" | "sosen";
 export type AlertType = "offline" | "production_drop" | "fault" | "battery_issue";
 export type Severity = "critical" | "warning" | "info";
@@ -93,8 +97,18 @@ export interface SiteHistory {
 
 export interface AuthResponse {
   access_token: string;
-  refresh_token: string;
+  // No refresh_token: it is delivered as an HttpOnly cookie the browser
+  // attaches automatically, so script never sees it. That is the whole
+  // point — it used to sit in localStorage, readable by any XSS.
   user: { id: string; email: string; name: string; role: Role };
+}
+
+/** One page of sites, as returned by GET /api/v1/sites. */
+export interface SitePage {
+  sites: SiteWithStatus[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface HealthResponse {

@@ -30,7 +30,19 @@ docker compose up --build
 - Backend API: http://localhost:8080
 - Postgres: localhost:5433 (mapped off the default 5432 to avoid clashing with a native Postgres install)
 
-By default `USE_MOCK_ADAPTERS=true`, so the backend generates realistic synthetic data for 50 demo sites across all three brands — no real credentials needed to see the whole system working end to end. Flip it off and fill in `DEYE_*` / `INGECON_*` / `SOSEN_*` once real credentials are available.
+Every reading the platform shows is polled live from an inverter portal — there is no synthetic or seeded data anywhere in the stack. Fill in at least one brand's credentials (`DEYE_*`, `INGECON_*` or `SOSEN_*`) in `.env` before starting; a brand left blank is skipped, and with all three blank the backend exits at boot with a message naming the variables it needs.
+
+Because history is built purely from live polling, a fresh database starts with empty charts and fills in one `POLL_INTERVAL` at a time — expect a few hours before the 24-hour views are meaningful.
+
+### Operational endpoints
+
+| Path | Purpose |
+|---|---|
+| `/healthz` | Liveness. Process-only — deliberately does not touch the DB, since a liveness probe that fails during a database outage makes the orchestrator restart every replica in a loop |
+| `/health` | Readiness. Pings the DB and returns **503** when it is unreachable; a stalled collector reports `degraded` but stays in rotation, because the API is still serving correct history |
+| `/metrics` | Prometheus. Cycle duration, per-brand online/offline/**unknown**, vendor API latency and outcome, alert and login counters. Unauthenticated by design (a scraper has no session) — bind internally or restrict at the proxy |
+
+Every response carries an `X-Request-Id`, echoing an upstream value when present, so a user can quote an id from a failed request instead of you grepping by timestamp.
 
 A seed admin user is created on first boot: **admin@solarfleet.local / ChangeMe123!** — change this immediately in production.
 
@@ -43,14 +55,29 @@ cp .env.example .env
 go run ./cmd/server
 ```
 
+> `cmd/server` reads configuration from the process environment, not from
+> `.env` — nothing in the binary parses a dotenv file. Export the values
+> first (`set -a; . ./.env; set +a` on a POSIX shell) or pass them inline.
+> Under Docker Compose this is handled for you.
+
 **Frontend**
 ```bash
 cd frontend
+cp .env.example .env.local
 npm install
 npm run dev
 ```
 
-Backend requires a reachable Postgres+TimescaleDB instance (run `docker compose up db` to get just the database).
+Backend requires a reachable Postgres+TimescaleDB instance (run `docker compose up db` to get just the database). Note that `.env.example` points at host port **5433**, since Compose maps the database off 5432 to avoid clashing with a native Postgres install.
+
+**If port 8080 is already taken** (Apache/XAMPP and IIS commonly own it on Windows), change it in *both* places or the frontend will silently fail every request:
+
+```bash
+# backend/.env
+PORT=8081
+# frontend/.env.local
+NEXT_PUBLIC_API_URL=http://localhost:8081
+```
 
 ## Repository layout
 

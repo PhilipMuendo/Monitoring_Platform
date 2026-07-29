@@ -39,7 +39,11 @@ async function request<T>(path: string, options: RequestInit = {}, allowRetry = 
   }
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  // credentials: "include" so the HttpOnly refresh cookie is sent on the
+  // auth routes. Authenticated API routes still rely on the Authorization
+  // header, which is what keeps them immune to CSRF — a cross-site request
+  // can carry the cookie but cannot set that header.
+  const res = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
 
   if (res.status === 401 && allowRetry && refreshHandler) {
     const newToken = await refreshHandler();

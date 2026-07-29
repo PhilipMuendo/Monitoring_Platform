@@ -13,6 +13,12 @@ export interface PowerFlowLabelContentProps {
   bgClass: string;
   active: boolean;
   size?: number;
+  /**
+   * Draws the text stack on an opaque chip. Needed for the centre hub: its
+   * label sits directly between the badge and the battery node, so the
+   * battery flow edge runs straight through the text on its way up.
+   */
+  chip?: boolean;
 }
 
 // The actual icon-badge + label + value stack, shared verbatim between the
@@ -28,6 +34,7 @@ export function PowerFlowLabelContent({
   bgClass,
   active,
   size = 88,
+  chip = false,
 }: PowerFlowLabelContentProps) {
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 text-center">
@@ -40,9 +47,15 @@ export function PowerFlowLabelContent({
         {active && <span className={cn("absolute inset-0 animate-ping rounded-full opacity-20", bgClass)} />}
         <Icon className={cn("size-5", colorClass)} strokeWidth={2} />
       </motion.div>
-      <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
-      <div className={cn("font-mono text-sm font-semibold tabular-nums", colorClass)}>{value}</div>
-      {sublabel && <div className="text-[10px] leading-tight text-muted-foreground">{sublabel}</div>}
+      {/* nowrap throughout: these sit in a fixed-size SVG foreignObject, so a
+          wrapped sublabel ("discharging 347.5 kW") pushes a second line past
+          the box and the SVG viewport slices it off mid-word. PowerFlowNode
+          gives the box enough width for the longest label instead. */}
+      <div className={cn("flex flex-col items-center", chip && "rounded-md bg-card px-2 py-0.5")}>
+        <div className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">{label}</div>
+        <div className={cn("whitespace-nowrap font-mono text-sm font-semibold tabular-nums", colorClass)}>{value}</div>
+        {sublabel && <div className="whitespace-nowrap text-[10px] leading-tight text-muted-foreground">{sublabel}</div>}
+      </div>
     </div>
   );
 }

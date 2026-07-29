@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+# Cancel superseded runs on the same branch — a queue of stale CI is noise
+# and it competes for runners with the run that matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Backend (Go)
@@ -18,9 +27,41 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: backend/go.sum
+
+      # gofmt first: formatting drift is cheap to catch and otherwise
+      # accumulates until diffs are unreadable.
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            gofmt -d $unformatted
+            exit 1
+          fi
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
       - run: go build ./...
       - run: go vet ./...
-      - run: go test ./... -v
+
+      # -race is the main reason to run these in CI at all: the collector
+      # fans out across goroutines, the SSE hub is shared mutable state, and
+      # the token cache is single-flight. None of those bugs reproduce
+      # reliably without the detector.
+      - name: Test
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Report coverage
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   frontend:
     name: Frontend (Next.js)
@@ -35,6 +76,17 @@ jobs:
           node-version: "22"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
+
       - run: npm ci
       - run: npm run lint
+
+      # Explicit, even though `next build` also typechecks: a failure here
+      # names the type error directly instead of burying it in build output,
+      # and it fails in seconds rather than after a full production build.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
       - run: npm run build

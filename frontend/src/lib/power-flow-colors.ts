@@ -18,11 +18,11 @@ export interface PowerFlowPalette {
 
 export const POWER_FLOW_COLORS: Record<"light" | "dark", PowerFlowPalette> = {
   light: {
-    solar: "#eb9b00",
-    battery: "#2cbb67",
-    grid: "#1d84f5",
-    load: "#9d57de",
-    critical: "#f92434",
+    solar: "#a96100",
+    battery: "#00863f",
+    grid: "#0063d7",
+    load: "#8031c0",
+    critical: "#d40924",
   },
   dark: {
     solar: "#f6af00",
@@ -65,12 +65,20 @@ export const POWER_FLOW_NEUTRALS: Record<"light" | "dark", PowerFlowNeutrals> = 
 // (POWER_FLOW_COLORS) and battery fill react to the data.
 export const STUDIO = {
   background: "#eef1f5",
+  // Vertical backdrop gradient. Subtle on purpose — enough to give the
+  // render depth, not enough to compete with the building for contrast.
+  backdropTop: "#dfe5ee",
+  backdropBottom: "#f4f6f9",
   wall: "#f6f7f9",
   wallAlt: "#e8eaef",
   wallSide: "#eceef2",
   roof: "#e2e6ec",
   trim: "#c4cad4",
-  frame: "#2f3742",
+  // Window frames. Lightened from #2f3742: near-black mullions on a white
+  // facade turned every opening into a black-outlined rectangle that read
+  // as a doorway punched through the wall. The reference uses thin, pale
+  // frames that let the glazing itself carry the detail.
+  frame: "#8d949e",
   glassTint: "#9fb4c4", // tinted architectural glass
   panel: "#0c1626", // dark glossy solar
   panelFrame: "#8b95a5",
@@ -84,4 +92,36 @@ export const STUDIO = {
   cabinetTrim: "#cdd2da",
   cabinetScreen: "#1d2430",
   ground: "#e9ecf1",
+
+  // Cutaway interior. Deliberately warm against the cool white shell —
+  // this contrast is what makes a sectioned building read as a *home*
+  // rather than a model, and it's the single biggest difference between
+  // our render and the reference. Kept low-saturation so the four accent
+  // colours on the flow overlay stay the brightest thing on screen.
+  floor: "#e4dcd0",
+  interiorWall: "#f3f0ea",
+  slabEdge: "#f7f8fa",
+  sofa: "#d6cec2",
+  sofaAccent: "#c08268",
+  wood: "#a9825a",
+  woodLight: "#c8a87f",
+  linen: "#f2eee7",
+  rug: "#dbd1c1",
+  foliage: "#7d9a6c",
+  lampShade: "#f0ece3",
+} as const;
+
+// Text/line colors for the HTML overlays drawn on top of the 3D canvas
+// (fleet-count badge, dashed callouts).
+//
+// These must NOT come from the theme tokens. The studio background above is
+// deliberately fixed-light in both themes, so a `text-foreground` overlay
+// resolves to near-white in dark mode and renders white-on-#eef1f5 —
+// effectively invisible. These are pinned to the canvas instead, and clear
+// 6:1 (muted) and 12.9:1 (strong) against it. Accent-colored values on the
+// canvas should use POWER_FLOW_COLORS.light for the same reason.
+export const STUDIO_INK = {
+  strong: "#222933",
+  muted: "#535c66",
+  line: "#80878f",
 } as const;

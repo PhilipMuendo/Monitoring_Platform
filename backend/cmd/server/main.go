@@ -1,10 +1,11 @@
 // Command server is the solar-monitor backend: a single binary running
-// the REST/SSE API and the 5-minute polling+alerting engine side by side.
+// the REST/SSE API and the polling+alerting engine side by side.
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,9 +13,10 @@ import (
 	"syscall"
 	"time"
 
+	"solar-monitor/internal/adapters"
 	"solar-monitor/internal/adapters/deye"
+	"solar-monitor/internal/adapters/httpjson"
 	"solar-monitor/internal/adapters/ingecon"
-	"solar-monitor/internal/adapters/mock"
 	"solar-monitor/internal/adapters/sosen"
 	"solar-monitor/internal/alertengine"
 	"solar-monitor/internal/api"
@@ -23,18 +25,25 @@ import (
 	"solar-monitor/internal/config"
 	"solar-monitor/internal/logger"
 	"solar-monitor/internal/models"
+	"solar-monitor/internal/observability"
 	"solar-monitor/internal/storage"
 )
 
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		panic(err)
+		// The logger isn't built yet (its level comes from cfg), and a
+		// configuration error is an operator mistake, not a crash — print
+		// it plainly rather than dumping a panic stack.
+		fmt.Fprintln(os.Stderr, "configuration error:", err)
+		os.Exit(1)
 	}
 	log := logger.New(cfg.LogLevel)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	metrics := observability.NewMetrics()
 
 	db, err := storage.Connect(ctx, cfg.DB)
 	if err != nil {
@@ -50,7 +59,8 @@ func main() {
 	}
 
 	sites := storage.NewSiteRepo(db)
-	metrics := storage.NewMetricsRepo(db)
+	siteMetrics := storage.NewMetricsRepo(db)
+	readings := storage.NewReadingStore(db)
 	alertsRepo := storage.NewAlertRepo(db)
 	users := storage.NewUserRepo(db)
 	refreshTokens := storage.NewRefreshTokenRepo(db)
@@ -66,27 +76,55 @@ func main() {
 	alertCfg := alertengine.DefaultConfig()
 	alertCfg.DaytimeStartHour = cfg.DaytimeStartHour
 	alertCfg.DaytimeEndMinutes = cfg.DaytimeEndHour*60 + 30
-	engine := alertengine.New(alertsRepo, metrics, alertCfg).WithNotifier(sseHub)
+	engine := alertengine.New(alertsRepo, siteMetrics, alertCfg).
+		WithNotifier(sseHub).
+		WithMetrics(metrics)
 
-	brandAdapters := buildAdapters(cfg)
-	coll := collector.New(brandAdapters, sites, metrics, engine, cfg.PollInterval)
+	brandAdapters := buildAdapters(cfg, log, metrics)
+	coll := collector.New(brandAdapters, sites, readings, engine, collector.Options{
+		PollInterval:   cfg.PollInterval,
+		MaxConcurrency: cfg.MaxConcurrency,
+		CycleTimeout:   cfg.CollectorTimeout,
+		Metrics:        metrics,
+	})
+
+	// History accumulates from live polling only. A fresh database starts
+	// with empty charts and fills in one poll interval at a time — there is
+	// no seeding step, because anything we could seed would be invented
+	// rather than measured.
 	go coll.Run(ctx)
 
-	tokenIssuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTAccessTTL)
+	tokenIssuer, err := auth.NewTokenIssuer(
+		auth.SigningKey{ID: cfg.JWTKeyID, Secret: []byte(cfg.JWTSecret)},
+		previousKeys(cfg),
+		cfg.JWTAccessTTL,
+	)
+	if err != nil {
+		log.Error("failed to build token issuer", "error", err)
+		os.Exit(1)
+	}
 	authService := auth.NewService(users, refreshTokens, tokenIssuer, cfg.JWTRefreshTTL)
 
 	router := api.NewRouter(&api.Deps{
 		Cfg:         cfg,
+		DB:          db,
 		Sites:       sites,
-		Metrics:     metrics,
+		SiteMetrics: siteMetrics,
 		Alerts:      alertsRepo,
 		Users:       users,
 		Audit:       auditRepo,
 		AuthService: authService,
 		TokenIssuer: tokenIssuer,
-		Collector:   coll,
-		SSEHub:      sseHub,
-		StartedAt:   time.Now(),
+		LoginThrottle: auth.NewThrottle(auth.ThrottleConfig{
+			MaxFailures: cfg.LoginMaxFailures,
+			Window:      cfg.LoginWindow,
+			Lockout:     cfg.LoginLockout,
+		}),
+		Collector:  coll,
+		Metrics:    metrics,
+		SSEHub:     sseHub,
+		Describers: describers(brandAdapters),
+		StartedAt:  time.Now(),
 	})
 
 	srv := &http.Server{
@@ -95,10 +133,14 @@ func main() {
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 0, // SSE connections are long-lived
 		IdleTimeout:  60 * time.Second,
+		// Without a header timeout a slowloris client can hold connections
+		// open indefinitely, since ReadTimeout alone doesn't bound the
+		// header phase for an idle-but-connected peer.
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
-		log.Info("server listening", "port", cfg.Port, "mock_adapters", cfg.UseMockAdapters)
+		log.Info("server listening", "port", cfg.Port, "metrics", cfg.MetricsEnabled)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("server error", "error", err)
 			os.Exit(1)
@@ -115,30 +157,55 @@ func main() {
 	}
 }
 
-// buildAdapters wires either the mock demo adapters (default) or the
-// real brand adapters, one models.BrandAdapter per brand either way — the
-// collector never knows the difference.
-func buildAdapters(cfg *config.Config) []models.BrandAdapter {
-	if cfg.UseMockAdapters {
-		slog.Info("using mock brand adapters for demo data", "site_count", cfg.MockSiteCount)
-		perBrand := cfg.MockSiteCount / 3
-		remainder := cfg.MockSiteCount % 3
-		counts := [3]int{perBrand, perBrand, perBrand}
-		for i := 0; i < remainder; i++ {
-			counts[i]++
-		}
-		return []models.BrandAdapter{
-			mock.New(models.BrandDeye, counts[0], 0),
-			mock.New(models.BrandIngecon, counts[1], counts[0]),
-			mock.New(models.BrandSosen, counts[2], counts[0]+counts[1]),
-		}
+// buildAdapters registers one models.BrandAdapter per brand that has
+// credentials in the environment. Unconfigured brands are skipped rather
+// than registered: an adapter with no credentials can only fail its
+// FetchAll every cycle, which inflates the error count and buries genuine
+// portal outages in noise. config.Load has already guaranteed at least one
+// brand is configured, so this never returns an empty slice.
+func buildAdapters(cfg *config.Config, log *slog.Logger, metrics *observability.Metrics) []models.BrandAdapter {
+	// Every vendor HTTP attempt — including retries — is observed here, so
+	// the adapters never import the metrics package.
+	hooks := httpjson.Hooks{OnAttempt: metrics.ObserveAdapterAttempt}
+
+	var out []models.BrandAdapter
+	if cfg.Deye.Configured() {
+		out = append(out, deye.New(cfg.Deye, hooks))
+	}
+	if cfg.Ingecon.Configured() {
+		out = append(out, ingecon.New(cfg.Ingecon, hooks))
+	}
+	if cfg.Sosen.Configured() {
+		out = append(out, sosen.New(cfg.Sosen, hooks))
 	}
 
-	return []models.BrandAdapter{
-		deye.New(cfg.Deye),
-		ingecon.New(cfg.Ingecon),
-		sosen.New(cfg.Sosen),
+	brands := make([]string, len(out))
+	for i, a := range out {
+		brands[i] = a.Name()
 	}
+	log.Info("brand adapters registered", "brands", brands)
+	return out
+}
+
+// describers indexes the adapters that can enumerate their own plants, so
+// the admin API can validate a hand-entered brand_site_id before creating
+// a site that could never receive telemetry.
+func describers(list []models.BrandAdapter) map[models.Brand]adapters.SiteDescriber {
+	out := make(map[models.Brand]adapters.SiteDescriber, len(list))
+	for _, a := range list {
+		if d, ok := a.(adapters.SiteDescriber); ok {
+			out[models.Brand(a.Name())] = d
+		}
+	}
+	return out
+}
+
+func previousKeys(cfg *config.Config) []auth.SigningKey {
+	out := make([]auth.SigningKey, 0, len(cfg.JWTPreviousKeys))
+	for _, k := range cfg.JWTPreviousKeys {
+		out = append(out, auth.SigningKey{ID: k.ID, Secret: []byte(k.Secret)})
+	}
+	return out
 }
 
 func getEnvOr(key, fallback string) string {

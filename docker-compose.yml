@@ -39,9 +39,16 @@ services:
       DB_NAME: ${DB_NAME:-solar_monitor}
       DB_SSLMODE: disable
       JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      JWT_KEY_ID: ${JWT_KEY_ID:-default}
+      JWT_PREVIOUS_KEYS: ${JWT_PREVIOUS_KEYS:-}
+      # Compose runs over plain HTTP on localhost, so a Secure cookie would
+      # never be sent back and login would silently fail. Set to true (and
+      # set a real JWT_SECRET) behind TLS.
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
       POLL_INTERVAL: ${POLL_INTERVAL:-5m}
+      COLLECTOR_MAX_CONCURRENCY: ${COLLECTOR_MAX_CONCURRENCY:-10}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      USE_MOCK_ADAPTERS: ${USE_MOCK_ADAPTERS:-true}
       DEYE_APP_ID: ${DEYE_APP_ID:-}
       DEYE_APP_SECRET: ${DEYE_APP_SECRET:-}
       DEYE_USERNAME: ${DEYE_USERNAME:-}

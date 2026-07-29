@@ -5,8 +5,6 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { API_URL, ApiError, api, registerAuthHandlers, setAccessToken } from "@/lib/api-client";
 import type { AuthResponse, Role, User } from "@/lib/types";
 
-const REFRESH_TOKEN_KEY = "solar_monitor_refresh_token";
-
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
 interface AuthContextValue {
@@ -23,14 +21,24 @@ function toUser(res: AuthResponse["user"]): User {
   return { id: res.id, email: res.email, name: res.name, role: res.role, is_active: true, created_at: "" };
 }
 
-// Bypasses the api-client's own 401-retry wrapper — this *is* that
-// wrapper's retry handler, so it must talk to the refresh endpoint with a
-// plain fetch to avoid recursing into itself on failure.
-async function refreshWithToken(refreshToken: string): Promise<AuthResponse> {
+/**
+ * Refreshes the session.
+ *
+ * The refresh token is no longer handled by this code at all — it lives in
+ * an HttpOnly cookie the browser attaches automatically, which is why every
+ * call here sends `credentials: "include"` and no body. Previously it sat
+ * in localStorage, where any XSS anywhere on the origin could read a
+ * 30-day credential straight out of it.
+ *
+ * Bypasses the api-client's own 401-retry wrapper deliberately: this *is*
+ * that wrapper's retry handler, so it must use a plain fetch or it recurses
+ * into itself on failure.
+ */
+async function refreshSession(): Promise<AuthResponse> {
   const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}) as { error?: string });
@@ -44,15 +52,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
 
   const applyAuthResponse = useCallback((data: AuthResponse) => {
+    // The access token is short-lived and kept in memory only. It is never
+    // persisted, so closing the tab ends its usefulness immediately; the
+    // cookie is what survives a reload.
     setAccessToken(data.access_token);
-    localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
     setUser(toUser(data.user));
     setStatus("authenticated");
   }, []);
 
   const clearAuth = useCallback(() => {
     setAccessToken(null);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
     setUser(null);
     setStatus("unauthenticated");
   }, []);
@@ -66,20 +75,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
-    const token = localStorage.getItem(REFRESH_TOKEN_KEY);
-    if (token) {
-      await api.post("/api/v1/auth/logout", { refresh_token: token }).catch(() => {});
-    }
+    // The server clears the cookie; there is nothing client-side to erase
+    // beyond the in-memory access token.
+    await api.post("/api/v1/auth/logout", {}).catch(() => {});
     clearAuth();
   }, [clearAuth]);
 
   useEffect(() => {
     registerAuthHandlers({
       refresh: async () => {
-        const token = localStorage.getItem(REFRESH_TOKEN_KEY);
-        if (!token) return null;
         try {
-          const data = await refreshWithToken(token);
+          const data = await refreshSession();
           applyAuthResponse(data);
           return data.access_token;
         } catch {
@@ -90,18 +96,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout: clearAuth,
     });
 
-    // Bootstraps auth from the persisted refresh token. Wrapped in an
-    // async IIFE (rather than an early synchronous setState) so every
-    // state update happens as a reaction to the token check/refresh
-    // resolving, not as a direct side effect of mounting.
+    // Bootstraps auth from the refresh cookie. We can't test for the
+    // cookie's presence (that is the entire point of HttpOnly), so we
+    // simply attempt a refresh: a 401 means no valid session.
+    //
+    // Wrapped in an async IIFE rather than an early synchronous setState so
+    // every state update happens as a reaction to the refresh resolving,
+    // not as a direct side effect of mounting.
     (async () => {
-      const token = localStorage.getItem(REFRESH_TOKEN_KEY);
-      if (!token) {
-        setStatus("unauthenticated");
-        return;
-      }
       try {
-        const data = await refreshWithToken(token);
+        const data = await refreshSession();
         applyAuthResponse(data);
       } catch {
         clearAuth();

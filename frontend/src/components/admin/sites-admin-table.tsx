@@ -21,6 +21,7 @@ import { BrandBadge } from "@/components/brand-badge";
 import { StatusBadge } from "@/components/status-badge";
 import { CreateSiteDialog } from "@/components/admin/create-site-dialog";
 import { EditSiteDialog } from "@/components/admin/edit-site-dialog";
+import { formatCapacity } from "@/lib/format";
 import { useDeleteSite } from "@/hooks/use-admin";
 import { useSites } from "@/hooks/use-sites";
 import { ApiError } from "@/lib/api-client";
@@ -64,7 +65,7 @@ export function SitesAdminTable() {
                 <TableCell>
                   <StatusBadge status={site.status} />
                 </TableCell>
-                <TableCell>{site.capacity_kw.toFixed(1)} kW</TableCell>
+                <TableCell>{formatCapacity(site.capacity_kw)}</TableCell>
                 <TableCell>{site.is_active ? "Yes" : "No"}</TableCell>
                 <TableCell className="flex justify-end gap-1 text-right">
                   <EditSiteDialog site={site} />

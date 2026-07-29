@@ -4,9 +4,14 @@ import { RoundedBox } from "@react-three/drei";
 
 import { STUDIO } from "@/lib/power-flow-colors";
 
-// Pushed well clear of the house (X = -2.9) so its callout never overlaps
-// the building windows.
-export const BATTERY_POSITION: [number, number, number] = [-2.9, 0, 0.3];
+// Pulled in from X = -2.9 to sit just off the house's front-left corner.
+// The old position bought callout clearance at the cost of a wide empty
+// band on the left of the frame, which forced the camera to zoom out and
+// left the building small; callout collisions are handled in screen space
+// now instead. Kept forward of the facade (Z = 1.05) rather than flat
+// against the left wall, because from the front-right camera anything
+// tucked beside the house is occluded by it.
+export const BATTERY_POSITION: [number, number, number] = [-1.95, 0, 1.05];
 export const BATTERY_ANCHOR: [number, number, number] = [BATTERY_POSITION[0], 1.12, BATTERY_POSITION[2]];
 
 interface BatteryPackProps {
@@ -26,9 +31,12 @@ export function BatteryPack({ accentColor, soc }: BatteryPackProps) {
       <RoundedBox args={[0.52, 1.15, 0.36]} radius={0.06} smoothness={4} position={[0, 0.575, 0]} castShadow receiveShadow>
         <meshStandardMaterial color={STUDIO.cabinet} roughness={0.5} metalness={0.15} />
       </RoundedBox>
-      {/* dark inset face */}
+      {/* Inset face. Kept light rather than near-black: at this scale a dark
+          slab on a white cabinet reads as a hole punched in the scene, and
+          from the front-right camera it was the only thing visible of the
+          battery at all. */}
       <RoundedBox args={[0.36, 0.9, 0.03]} radius={0.02} smoothness={3} position={[0, 0.62, 0.18]}>
-        <meshStandardMaterial color={STUDIO.cabinetScreen} roughness={0.4} />
+        <meshStandardMaterial color={STUDIO.cabinetTrim} roughness={0.55} />
       </RoundedBox>
       {/* charge indicator track */}
       <mesh position={[0, 0.62, 0.2]}>

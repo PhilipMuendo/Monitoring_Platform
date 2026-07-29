@@ -10,34 +10,54 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"solar-monitor/internal/adapters"
 	"solar-monitor/internal/auth"
 	"solar-monitor/internal/collector"
 	"solar-monitor/internal/config"
 	"solar-monitor/internal/models"
+	"solar-monitor/internal/observability"
 	"solar-monitor/internal/storage"
 )
 
 type Deps struct {
-	Cfg         *config.Config
-	Sites       *storage.SiteRepo
-	Metrics     *storage.MetricsRepo
-	Alerts      *storage.AlertRepo
-	Users       *storage.UserRepo
-	Audit       *storage.AuditRepo
-	AuthService *auth.Service
-	TokenIssuer *auth.TokenIssuer
-	Collector   *collector.Collector
-	SSEHub      *SSEHub
-	StartedAt   time.Time
+	Cfg *config.Config
+	DB  *storage.DB
+	// SiteMetrics is the metrics *repository* (history queries). Named to
+	// keep it distinct from Metrics, the Prometheus registry.
+	Sites         *storage.SiteRepo
+	SiteMetrics   *storage.MetricsRepo
+	Alerts        *storage.AlertRepo
+	Users         *storage.UserRepo
+	Audit         *storage.AuditRepo
+	AuthService   *auth.Service
+	TokenIssuer   *auth.TokenIssuer
+	LoginThrottle *auth.Throttle
+	Collector     *collector.Collector
+	Metrics       *observability.Metrics
+	SSEHub        *SSEHub
+	// Describers lets admin site-creation validate a brand_site_id against
+	// the vendor before inserting a row that could never receive telemetry.
+	Describers map[models.Brand]adapters.SiteDescriber
+	StartedAt  time.Time
 }
 
 func NewRouter(d *Deps) http.Handler {
 	r := chi.NewRouter()
-	r.Use(requestLogger)
+	// Request ID first so every downstream log line and response carries it.
+	r.Use(observability.RequestIDMiddleware)
+	r.Use(requestLogger(d.Metrics))
 	r.Use(cors(d.Cfg.CORSAllowedOrigin))
 
 	r.Get("/health", d.handleHealth)
 	r.Get("/healthz", d.handleLiveness)
+
+	// Metrics are deliberately not behind the API's JWT auth: a Prometheus
+	// scraper has no session. Bind this to an internal interface or
+	// restrict it at the reverse proxy — it exposes operational shape, not
+	// telemetry or credentials.
+	if d.Cfg.MetricsEnabled && d.Metrics != nil {
+		r.Handle("/metrics", d.Metrics.Handler())
+	}
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/auth/login", d.handleLogin)

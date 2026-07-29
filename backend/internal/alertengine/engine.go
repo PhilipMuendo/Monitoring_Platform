@@ -15,8 +15,8 @@ import (
 )
 
 type Config struct {
-	ProductionDropWindow     int           // consecutive low readings required
-	ProductionDropThresholdW float64       // "low" = below this many watts
+	ProductionDropWindow     int     // consecutive low readings required
+	ProductionDropThresholdW float64 // "low" = below this many watts
 	ProductionDropCooldown   time.Duration
 
 	OfflineThreshold time.Duration // no data for this long = offline
@@ -31,8 +31,8 @@ type Config struct {
 	// Daytime window (Africa/Nairobi, EAT = UTC+3), hardcoded per the
 	// brief's single-country-deployment decision — production-drop
 	// alerts only make sense while the sun is actually up.
-	DaytimeStartHour   int
-	DaytimeEndMinutes  int // end hour expressed in minutes-past-midnight, e.g. 18:30 = 1110
+	DaytimeStartHour  int
+	DaytimeEndMinutes int // end hour expressed in minutes-past-midnight, e.g. 18:30 = 1110
 }
 
 func DefaultConfig() Config {
@@ -67,15 +67,40 @@ type noopNotifier struct{}
 
 func (noopNotifier) Publish(string, any) {}
 
+// AlertRecorder observes alerts as they fire. Kept as a narrow interface
+// so alertengine does not depend on the metrics package.
+type AlertRecorder interface {
+	ObserveAlert(alertType, severity string)
+}
+
+type noopRecorder struct{}
+
+func (noopRecorder) ObserveAlert(string, string) {}
+
 type Engine struct {
 	alerts   *storage.AlertRepo
 	metrics  *storage.MetricsRepo
 	cfg      Config
 	notifier Notifier
+	recorder AlertRecorder
 }
 
 func New(alerts *storage.AlertRepo, metrics *storage.MetricsRepo, cfg Config) *Engine {
-	return &Engine{alerts: alerts, metrics: metrics, cfg: cfg, notifier: noopNotifier{}}
+	return &Engine{
+		alerts:   alerts,
+		metrics:  metrics,
+		cfg:      cfg,
+		notifier: noopNotifier{},
+		recorder: noopRecorder{},
+	}
+}
+
+// WithMetrics attaches an alert counter. Alert rate over time is the
+// signal that tells you a rule is too sensitive long before anyone files
+// a complaint about noise.
+func (e *Engine) WithMetrics(r AlertRecorder) *Engine {
+	e.recorder = r
+	return e
 }
 
 // WithNotifier attaches a live-push notifier (e.g. the API's SSE hub).
@@ -96,6 +121,22 @@ func isDaytime(t time.Time, cfg Config) bool {
 // once per site per collection cycle, immediately after the reading has
 // been written to site_metrics (so RecentReadings sees it).
 func (e *Engine) Evaluate(ctx context.Context, siteID, siteName string, reading models.SiteData) error {
+	// We only ever raise alerts about things we have actually measured.
+	//
+	// StatusUnknown means the vendor API was unreachable this cycle, and
+	// StatusCommissioning means the site has never reported at all. Neither
+	// is evidence about the site. Before this gate existed a single flaky
+	// HTTP call produced StatusOffline, which checkOffline escalated to a
+	// *critical* alert — the fastest route to an on-call rota that has
+	// learned to ignore this system.
+	//
+	// Note we return before touching any rule, including auto-resolve: an
+	// unreachable cycle must not resolve a genuine alert either. The alert
+	// stays open until we can see the site again.
+	if !reading.Status.Alertable() {
+		return nil
+	}
+
 	recent, err := e.metrics.RecentReadings(ctx, siteID, e.cfg.BatteryWindow+1)
 	if err != nil {
 		return fmt.Errorf("alertengine: fetch recent readings: %w", err)
@@ -146,9 +187,16 @@ func (e *Engine) checkProductionDrop(ctx context.Context, siteID, siteName strin
 		return nil
 	}
 
+	// A window is only judged when every reading in it actually carries a
+	// power figure. A nil Power means the vendor didn't report the channel;
+	// counting that as "below threshold" would manufacture a production-drop
+	// alert out of missing data.
 	lowCount := 0
 	for _, r := range recent[:e.cfg.ProductionDropWindow] {
-		if r.Power < e.cfg.ProductionDropThresholdW {
+		if r.Power == nil {
+			return nil
+		}
+		if *r.Power < e.cfg.ProductionDropThresholdW {
 			lowCount++
 		}
 	}
@@ -166,16 +214,21 @@ func (e *Engine) checkBattery(ctx context.Context, siteID, siteName string, rece
 		return nil
 	}
 
+	// As with production drop: judge the window only if every reading in it
+	// reports SOC. A site with no battery reports nil forever, and counting
+	// those as "not low" was harmless, but a partially-reported window
+	// could never reach the threshold and silently disabled the rule.
 	lowCount := 0
 	var lastSOC float64
 	for i, r := range recent[:e.cfg.BatteryWindow] {
-		if r.SOC != nil {
-			if i == 0 {
-				lastSOC = *r.SOC
-			}
-			if *r.SOC < e.cfg.BatterySOCThresholdPct {
-				lowCount++
-			}
+		if r.SOC == nil {
+			return nil
+		}
+		if i == 0 {
+			lastSOC = *r.SOC
+		}
+		if *r.SOC < e.cfg.BatterySOCThresholdPct {
+			lowCount++
 		}
 	}
 	condition := lowCount >= e.cfg.BatteryWindow
@@ -217,6 +270,7 @@ func (e *Engine) evaluateRule(ctx context.Context, siteID string, alertType mode
 			return fmt.Errorf("alertengine: create alert: %w", err)
 		}
 		e.notifier.Publish("alert.created", created)
+		e.recorder.ObserveAlert(string(alertType), string(severity))
 		return nil
 	}
 

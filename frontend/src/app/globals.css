@@ -100,19 +100,26 @@
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
 
-  --solar: oklch(0.75 0.17 75);
-  --solar-foreground: oklch(0.2 0.03 75);
-  --battery: oklch(0.7 0.17 152);
+  /* Light-mode energy/status hues are darker and slightly less chromatic
+     than their dark-mode counterparts. The dark values (amber at L=0.8,
+     green at L=0.75) only clear ~2.1-2.5:1 against a white surface — below
+     the 3:1 WCAG minimum for graphical objects, and these carry meaning as
+     line colors, bar fills and status text. Every value below sits at
+     >=4.1:1 on both white and the 3D scene's #eef1f5 studio background.
+     Hex mirrors of these live in lib/power-flow-colors.ts. */
+  --solar: oklch(0.56 0.14 68);
+  --solar-foreground: oklch(0.99 0 0);
+  --battery: oklch(0.54 0.15 152);
   --battery-foreground: oklch(0.99 0 0);
-  --grid: oklch(0.62 0.19 255);
+  --grid: oklch(0.52 0.2 255);
   --grid-foreground: oklch(0.99 0 0);
-  --load: oklch(0.6 0.2 305);
+  --load: oklch(0.5 0.21 305);
   --load-foreground: oklch(0.99 0 0);
 
-  --status-online: oklch(0.7 0.17 152);
-  --status-warning: oklch(0.78 0.17 70);
-  --status-critical: oklch(0.63 0.24 25);
-  --status-offline: oklch(0.6 0.01 0);
+  --status-online: oklch(0.54 0.15 152);
+  --status-warning: oklch(0.58 0.15 66);
+  --status-critical: oklch(0.55 0.22 25);
+  --status-offline: oklch(0.52 0.01 0);
 }
 
 .dark {

@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"solar-monitor/internal/adapters/httpjson"
 	"solar-monitor/internal/config"
 	"solar-monitor/internal/models"
 )
@@ -15,7 +17,7 @@ func newTestAdapter(t *testing.T, handler http.HandlerFunc) *Adapter {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	a := New(config.SosenConfig{Username: "user@example.com", Password: "pw"})
+	a := newForTest(config.SosenConfig{Username: "user@example.com", Password: "pw"})
 	a.baseURL = srv.URL
 	return a
 }
@@ -69,8 +71,8 @@ func TestFetchAll_OnlinePlantWithBattery(t *testing.T) {
 	if site.BrandSiteID != "299093" {
 		t.Errorf("BrandSiteID = %q, want 299093", site.BrandSiteID)
 	}
-	if site.Power != 3890.0 {
-		t.Errorf("Power = %v, want 3890", site.Power)
+	if got := deref(t, "Power", site.Power); got != 3890.0 {
+		t.Errorf("Power = %v, want 3890", got)
 	}
 	if site.Status != models.StatusOnline {
 		t.Errorf("Status = %v, want online", site.Status)
@@ -176,4 +178,28 @@ func TestValidateCredentials_AuthFailure(t *testing.T) {
 	if err := a.ValidateCredentials(t.Context()); err == nil {
 		t.Fatal("expected error for rejected credentials")
 	}
+}
+
+func newForTest(cfg config.SosenConfig) *Adapter {
+	a := New(cfg, httpjson.Hooks{})
+	a.client = httpjson.New("sosen", fastRetry(), httpjson.Hooks{})
+	return a
+}
+
+func fastRetry() httpjson.Config {
+	c := httpjson.Defaults()
+	c.BaseBackoff = time.Millisecond
+	c.MaxBackoff = 2 * time.Millisecond
+	return c
+}
+
+// deref reads an optional telemetry channel for assertions. Every channel
+// on SiteData is a pointer now, so that "the vendor did not report this"
+// is representable rather than being flattened into a confident zero.
+func deref(t *testing.T, name string, v *float64) float64 {
+	t.Helper()
+	if v == nil {
+		t.Fatalf("%s was nil; expected a reported value", name)
+	}
+	return *v
 }

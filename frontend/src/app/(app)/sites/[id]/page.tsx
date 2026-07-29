@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { ArrowLeft, Battery, Gauge, MapPin, Sun, Zap } from "lucide-react";
+import { ArrowLeft, Battery, CalendarDays, Gauge, MapPin, Sun, TrendingUp, Zap } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,7 +16,8 @@ import { PowerHistoryChart } from "@/components/site/power-history-chart";
 import { SiteAlertsList } from "@/components/site/site-alerts-list";
 import { useSiteHistory } from "@/hooks/use-site-history";
 import { useSite } from "@/hooks/use-sites";
-import { formatEnergy, formatPercent, formatPower, formatRelativeTime } from "@/lib/format";
+import { formatCapacity, formatEnergy, formatPercent, formatPower, formatRelativeTime } from "@/lib/format";
+import { socTextClass } from "@/lib/soc-color";
 
 type Range = "24h" | "7d" | "30d";
 
@@ -61,7 +62,7 @@ export default function SiteDetailPage() {
         </div>
         <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
           <MapPin className="size-3.5" />
-          {site.location} · {site.capacity_kw.toFixed(1)} kW capacity · last seen {formatRelativeTime(site.last_seen_at)}
+          {site.location} · {formatCapacity(site.capacity_kw)} capacity · last seen {formatRelativeTime(site.last_seen_at)}
         </p>
       </div>
 
@@ -76,9 +77,27 @@ export default function SiteDetailPage() {
           colorClass="text-grid"
           bgClass="bg-grid/10"
         />
-        <KpiCard icon={Battery} label="Battery" value={formatPercent(site.soc)} colorClass="text-battery" bgClass="bg-battery/10" />
-        <KpiCard icon={Sun} label="Energy today" value={formatEnergy(site.energy_today_kwh)} colorClass="text-solar" bgClass="bg-solar/10" />
-        <KpiCard icon={Sun} label="Energy total" value={formatEnergy(site.energy_total_kwh)} colorClass="text-solar" bgClass="bg-solar/10" />
+        <KpiCard
+          icon={Battery}
+          label="Battery"
+          value={formatPercent(site.soc)}
+          colorClass={site.soc != null ? socTextClass(site.soc) : "text-battery"}
+          bgClass="bg-battery/10"
+        />
+        <KpiCard
+          icon={CalendarDays}
+          label="Energy today"
+          value={formatEnergy(site.energy_today_kwh)}
+          colorClass="text-solar"
+          bgClass="bg-solar/10"
+        />
+        <KpiCard
+          icon={TrendingUp}
+          label="Energy total"
+          value={formatEnergy(site.energy_total_kwh)}
+          colorClass="text-solar"
+          bgClass="bg-solar/10"
+        />
       </div>
 
       <Card>

@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { FleetPowerFlowView } from "@/components/dashboard/fleet-power-flow-view";
 import { IssuesPanel } from "@/components/dashboard/issues-panel";
 import { KpiRow } from "@/components/dashboard/kpi-row";
+import { PowerFlowSkeleton } from "@/components/dashboard/power-flow-skeleton";
 import { PowerFlowViewToggle } from "@/components/dashboard/power-flow-view-toggle";
 import { SiteGrid } from "@/components/dashboard/site-grid";
 import { usePowerFlowViewMode } from "@/hooks/use-power-flow-view-mode";
@@ -44,11 +45,7 @@ export default function DashboardPage() {
             </CardAction>
           </CardHeader>
           <CardContent>
-            {summary ? (
-              <FleetPowerFlowView summary={summary} mode={mode} />
-            ) : (
-              <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">Loading…</div>
-            )}
+            {summary ? <FleetPowerFlowView summary={summary} mode={mode} /> : <PowerFlowSkeleton />}
           </CardContent>
         </Card>
 

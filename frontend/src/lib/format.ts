@@ -15,6 +15,21 @@ export function formatEnergy(kwh: number | null | undefined): string {
   return `${kwh.toFixed(1)} kWh`;
 }
 
+/**
+ * Installed capacity, or an em dash when it isn't known.
+ *
+ * Zero is treated as "unknown", not as a real 0 kW array — no site in the
+ * fleet has a zero-kilowatt installation, and the Ingecon plant record
+ * exposes no capacity field at all, so every Ingecon site arrives with
+ * capacity_kw = 0 until someone types it into the admin UI. Rendering that
+ * as "0.0 kW" states a measurement we do not have, and it silently poisons
+ * any performance-ratio maths downstream.
+ */
+export function formatCapacity(kw: number | null | undefined): string {
+  if (kw == null || Number.isNaN(kw) || kw <= 0) return "— kW";
+  return `${kw.toFixed(1)} kW`;
+}
+
 export function formatPercent(pct: number | null | undefined): string {
   if (pct == null || Number.isNaN(pct)) return "—";
   return `${Math.round(pct)}%`;
@@ -33,12 +48,23 @@ export function formatRelativeTime(iso: string | null | undefined): string {
   return `${diffDay}d ago`;
 }
 
-export function formatClockTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+// Accept epoch-ms as well as an ISO string: the history charts run on a
+// numeric time axis and hand these formatters raw timestamps.
+export function formatClockTime(value: string | number): string {
+  return new Date(value).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
-export function formatDayLabel(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+export function formatDayLabel(value: string | number): string {
+  return new Date(value).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+/** Date + time, for tooltips on a time axis where the day may not be obvious. */
+export function formatDateTime(value: string | number): string {
+  const d = new Date(value);
+  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${d.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
 }
 
 export const STATUS_LABEL: Record<string, string> = {
@@ -46,6 +72,11 @@ export const STATUS_LABEL: Record<string, string> = {
   offline: "Offline",
   warning: "Warning",
   error: "Fault",
+  // Deliberately not "Offline". These say we could not see the site, or
+  // have not seen it yet — presenting either as an outage is what made a
+  // vendor API blip look like a fleet-wide failure.
+  unknown: "No data",
+  commissioning: "Commissioning",
 };
 
 export const BRAND_LABEL: Record<string, string> = {

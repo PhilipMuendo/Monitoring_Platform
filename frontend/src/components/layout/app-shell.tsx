@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { useAlertStream } from "@/hooks/use-alert-stream";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
@@ -41,7 +42,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
+      {/* /88 rather than /60 under backdrop-filter: the 3D flow panel renders
+          on a fixed near-white canvas in both themes, and at 60% opacity that
+          bright block smeared through the header in dark mode — visibly
+          lighter across the left half than the right. */}
+      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/88">
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4">
           <Link href="/" className="flex items-center gap-2 font-semibold">
             <Sun className="size-5 text-solar" />
@@ -68,6 +73,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
+
             <Button variant="outline" size="sm" asChild>
               <a href="/wall" target="_blank" rel="noopener noreferrer">
                 <MonitorPlay className="size-4" />

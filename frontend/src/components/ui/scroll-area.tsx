@@ -16,9 +16,22 @@ function ScrollArea({
       className={cn("relative", className)}
       {...props}
     >
+      {/*
+        [&>div]:!block overrides the `display:table` Radix sets inline on the
+        viewport's content wrapper. A table box shrink-wraps to its content,
+        so descendants using `truncate` never receive a bounded width: long
+        text runs past the panel and gets hard-clipped mid-word by the
+        viewport instead of ellipsising.
+
+        The trade-off is that this makes ScrollArea vertical-only —
+        `display:table` is what lets the viewport measure content wider than
+        itself for horizontal scrolling. Every ScrollArea in this app scrolls
+        vertically; if a horizontal one is ever needed, drop this override
+        for that instance rather than removing it here.
+      */}
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
+        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 [&>div]:!block"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

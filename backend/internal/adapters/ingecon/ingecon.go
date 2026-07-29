@@ -23,17 +23,17 @@
 package ingecon
 
 import (
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
 
 	"solar-monitor/internal/adapters"
+	"solar-monitor/internal/adapters/httpjson"
 	"solar-monitor/internal/config"
 	"solar-monitor/internal/models"
 )
@@ -44,14 +44,14 @@ const maxRequestsPerMinute = 15
 
 type Adapter struct {
 	cfg    config.IngeconConfig
-	client *http.Client
+	client *httpjson.Client
 	limit  *rateLimiter
 }
 
-func New(cfg config.IngeconConfig) *Adapter {
+func New(cfg config.IngeconConfig, hooks httpjson.Hooks) *Adapter {
 	return &Adapter{
 		cfg:    cfg,
-		client: &http.Client{Timeout: 20 * time.Second},
+		client: httpjson.New(string(models.BrandIngecon), httpjson.Defaults(), hooks),
 		limit:  newRateLimiter(maxRequestsPerMinute, time.Minute),
 	}
 }
@@ -71,18 +71,94 @@ func (a *Adapter) ValidateCredentials(ctx context.Context) error {
 // --- Plant list: GET api/users/plants ---
 
 type plant struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Location         string `json:"location"`
-	Timezone         string `json:"timezone"`
-	Enabled          bool   `json:"enabled"`
-	RegistrationDate string `json:"registrationDate"`
-	PlantTypeID      string `json:"plantTypeId"` // "pv" or "sc"
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Location         string   `json:"location"`
+	Timezone         string   `json:"timezone"`
+	Enabled          bool     `json:"enabled"`
+	RegistrationDate string   `json:"registrationDate"`
+	PlantTypeID      string   `json:"plantTypeId"` // "pv" or "sc"
 	Boards           []string `json:"boards"`
+
+	// The plant list already carries the same connectivity flag the
+	// /api/presence/plant/{id} endpoint returns, verified live against all
+	// four plants on the account. Reading it here removes one HTTP call per
+	// plant per cycle, which matters against a 15 req/min ceiling.
+	//
+	// Note there is deliberately no capacity field: the Ingecon plant record
+	// simply does not expose installed kWp, so capacity has to be entered
+	// through the admin UI and Describe must not overwrite it with a zero.
+	Presence struct {
+		Connected bool  `json:"connected"`
+		LastLog   int64 `json:"lastLog"`
+	} `json:"presence"`
+}
+
+// sampleLayout is the shape of every DateTime/dateTime field the sample
+// endpoints return: a wall-clock stamp with no zone or offset.
+const sampleLayout = "2006-01-02T15:04:05"
+
+// parseSampleTime interprets a sample's wall-clock stamp in the plant's own
+// timezone.
+//
+// This is not cosmetic. The stamps are plant-local — verified live against
+// GWS Kitale Dairy, whose last sample read 2026-07-29T11:15:00 while
+// Nairobi wall-clock was 11:17 and UTC was 08:17. Parsing them with
+// time.Parse yields UTC, which for an EAT plant puts every reading three
+// hours in the *future*, and that breaks three things at once:
+//
+//   - time.Since(reading.Timestamp) goes negative, so the alert engine's
+//     staleness check can never fire and a dead Ingecon board is only ever
+//     caught by the presence flag;
+//   - last_seen_at is in the future, so the UI cheerfully reports "last
+//     seen 1m ago" for a plant that has been silent for hours;
+//   - metrics land in the future, leaving a three-hour hole at the right
+//     edge of every history chart.
+//
+// Falls back to UTC if the zone database has no entry for the plant's
+// timezone, which is still better than silently mislabelling the instant.
+func parseSampleTime(value, timezone string) (time.Time, bool) {
+	if value == "" {
+		return time.Time{}, false
+	}
+	loc := time.UTC
+	if timezone != "" {
+		if l, err := time.LoadLocation(timezone); err == nil {
+			loc = l
+		}
+	}
+	parsed, err := time.ParseInLocation(sampleLayout, value, loc)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+// integrateEnergyKWh trapezoid-integrates a power series (watts, against
+// wall-clock sample stamps) into kWh.
+//
+// Ingecon exposes no energy-today register on the self-consumption
+// endpoint, but it does return the whole day's samples on the call we
+// already make — so the day's yield is recoverable from measured data at
+// zero extra API cost. Gaps longer than an hour are skipped rather than
+// bridged, so an offline stretch doesn't get back-filled with an
+// interpolated ramp that never happened.
+func integrateEnergyKWh(times []time.Time, watts []float64) float64 {
+	const maxGap = time.Hour
+
+	var wh float64
+	for i := 1; i < len(times) && i < len(watts); i++ {
+		dt := times[i].Sub(times[i-1])
+		if dt <= 0 || dt > maxGap {
+			continue
+		}
+		wh += (watts[i] + watts[i-1]) / 2 * dt.Hours()
+	}
+	return wh / 1000
 }
 
 func (a *Adapter) listPlants(ctx context.Context) ([]plant, error) {
-	raw, err := a.get(ctx, "/api/users/plants")
+	raw, err := a.get(ctx, "/api/users/plants", "/api/users/plants")
 	if err != nil {
 		return nil, fmt.Errorf("plant list: %w", err)
 	}
@@ -113,79 +189,51 @@ func (a *Adapter) Describe(ctx context.Context) ([]adapters.SiteDescriptor, erro
 // --- PV plant telemetry: GET api/ingecon/samplesv2/plant/{id}/date/{date} ---
 
 type pvSample struct {
-	SN        string    `json:"SN"`
-	BoardID   string    `json:"BoardId"`
-	DateTime  string    `json:"DateTime"`
-	Pac       float64   `json:"Pac"`
-	PacPv     float64   `json:"PacPv"`
-	PacBatt   float64   `json:"PacBatt"`
-	Qac       float64   `json:"Qac"`
-	Alarms    string    `json:"alarms"`
-	Warnings  string    `json:"warnings"`
-	Vdc       []float64 `json:"Vdc"`
-	Idc       []float64 `json:"Idc"`
-	Pdc       []float64 `json:"Pdc"`
-	EInjection float64  `json:"EInjection"`
-	EAbsorption float64 `json:"EAbsorption"`
+	SN          string    `json:"SN"`
+	BoardID     string    `json:"BoardId"`
+	DateTime    string    `json:"DateTime"`
+	Pac         float64   `json:"Pac"`
+	PacPv       float64   `json:"PacPv"`
+	PacBatt     float64   `json:"PacBatt"`
+	Qac         float64   `json:"Qac"`
+	Alarms      string    `json:"alarms"`
+	Warnings    string    `json:"warnings"`
+	Vdc         []float64 `json:"Vdc"`
+	Idc         []float64 `json:"Idc"`
+	Pdc         []float64 `json:"Pdc"`
+	EInjection  float64   `json:"EInjection"`
+	EAbsorption float64   `json:"EAbsorption"`
 }
 
 // --- Self-consumption plant telemetry: GET api/ems/samples/plant/{id}/date/{date} ---
 
 type scSample struct {
-	SOC                    float64 `json:"soc"`
-	VBat                   float64 `json:"vBat"`
-	Board                  string  `json:"board"`
-	Phase                  int     `json:"phase"`
-	DateTime               string  `json:"dateTime"`
-	Consumption            float64 `json:"consumption"`
-	FromGridToConsumption  float64 `json:"fromGridToConsumption"`
-	PVGeneration           float64 `json:"pvGeneration"`
+	SOC                      float64 `json:"soc"`
+	VBat                     float64 `json:"vBat"`
+	Board                    string  `json:"board"`
+	Phase                    int     `json:"phase"`
+	DateTime                 string  `json:"dateTime"`
+	Consumption              float64 `json:"consumption"`
+	FromGridToConsumption    float64 `json:"fromGridToConsumption"`
+	PVGeneration             float64 `json:"pvGeneration"`
 	FromStorageToConsumption float64 `json:"fromStorageToConsumption"`
-	FromPVToConsumption    float64 `json:"fromPVToConsumption"`
-	TotalConsumption       float64 `json:"totalConsumption"`
-	SelfConsumptionRatio   float64 `json:"selfConsumptionRatio"`
+	FromPVToConsumption      float64 `json:"fromPVToConsumption"`
+	TotalConsumption         float64 `json:"totalConsumption"`
+	SelfConsumptionRatio     float64 `json:"selfConsumptionRatio"`
 }
 
-// --- Presence: GET api/presence/plant/{id} ---
-
-type presenceEntry struct {
-	BoardID  string `json:"boardId"`
-	DeviceID string `json:"deviceId"`
-	Version  string `json:"version"`
-	Node     int    `json:"node"`
-	Presence struct {
-		Connected bool  `json:"connected"`
-		LastLog   int64 `json:"lastLog"`
-	} `json:"presence"`
-}
-
-func (a *Adapter) fetchPresence(ctx context.Context, plantID string) ([]presenceEntry, error) {
-	raw, err := a.get(ctx, "/api/presence/plant/"+plantID)
-	if err != nil {
-		return nil, err
-	}
-	var entries []presenceEntry
-	if err := json.Unmarshal(raw, &entries); err != nil {
-		return nil, fmt.Errorf("presence: decode: %w", err)
-	}
-	return entries, nil
-}
-
-func anyConnected(entries []presenceEntry) bool {
-	for _, e := range entries {
-		if e.Presence.Connected {
-			return true
-		}
-	}
-	return false
-}
+// The dedicated presence endpoint (GET api/presence/plant/{id}) is no
+// longer called. The plant list returned by api/users/plants carries the
+// identical connected flag for every plant — verified live against all four
+// plants on this account — so reading it there costs one request per cycle
+// instead of one per plant, which matters against a 15 req/min ceiling.
 
 // FetchAll lists every plant on the account and fetches today's telemetry
 // for each, dispatching on plantTypeId, throttled to stay under Ingecon's
 // documented rate limit.
 func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 	if a.cfg.APIKey == "" {
-		return nil, fmt.Errorf("ingecon: not configured (INGECON_API_KEY empty) — use the mock adapter until credentials are set")
+		return nil, fmt.Errorf("ingecon: not configured (INGECON_API_KEY empty)")
 	}
 
 	plants, err := a.listPlants(ctx)
@@ -193,33 +241,50 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 		return nil, fmt.Errorf("ingecon: %w", err)
 	}
 
-	today := time.Now().Format("20060102")
 	out := make([]models.SiteData, 0, len(plants))
 	for _, p := range plants {
 		if !p.Enabled {
 			continue
 		}
 
+		// The sample endpoints are keyed by the plant's own calendar date.
+		// Using the server's date would ask an EAT plant for "yesterday"
+		// through the whole 21:00-00:00 UTC window.
+		today := plantToday(p.Timezone)
+
 		var data models.SiteData
 		var fetchErr error
 		switch p.PlantTypeID {
 		case "sc":
-			data, fetchErr = a.fetchSCTelemetry(ctx, p.ID, today)
+			data, fetchErr = a.fetchSCTelemetry(ctx, p.ID, today, p.Timezone)
 		default: // "pv" and anything unrecognized falls back to pv telemetry
-			data, fetchErr = a.fetchPVTelemetry(ctx, p.ID, today)
+			data, fetchErr = a.fetchPVTelemetry(ctx, p.ID, today, p.Timezone)
 		}
 
 		if fetchErr != nil {
-			out = append(out, models.SiteData{BrandSiteID: p.ID, Timestamp: time.Now(), Status: models.StatusOffline})
+			// Unknown, not Offline. A sample-endpoint failure tells us
+			// nothing about the plant — only that we could not read it —
+			// and the alert engine treats Offline as a wake-someone event.
+			slog.Warn("ingecon: telemetry unavailable", "plant", p.ID, "error", fetchErr)
+			out = append(out, models.SiteData{BrandSiteID: p.ID, Timestamp: time.Now(), Status: models.StatusUnknown})
 			continue
 		}
 
-		// The presence endpoint is the authoritative connectivity signal;
-		// use it to override the data-derived status when a board is down.
-		if presence, err := a.fetchPresence(ctx, p.ID); err == nil && len(presence) > 0 {
-			if !anyConnected(presence) {
-				data.Status = models.StatusOffline
-			}
+		// Connectivity is authoritative over anything derived from the
+		// samples. When the board is down, the last sample's power is a
+		// historical value, not a live one — reporting it beside an
+		// "Offline" badge produced the contradiction of a plant shown as
+		// both offline and generating 1.6 kW. Zero the instantaneous
+		// channels and keep the timestamp, so the UI's "last seen" is the
+		// honest signal. Energy today stays: it is a day total, not a
+		// snapshot, and remains true for the hours the plant did run.
+		if !p.Presence.Connected {
+			data.Status = models.StatusOffline
+			data.Power = nil
+			data.GridPower = nil
+			data.LoadPower = nil
+			data.SOC = nil
+			data.BatteryV = nil
 		}
 
 		out = append(out, data)
@@ -227,8 +292,20 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 	return out, nil
 }
 
-func (a *Adapter) fetchPVTelemetry(ctx context.Context, plantID, date string) (models.SiteData, error) {
-	raw, err := a.get(ctx, "/api/ingecon/samplesv2/plant/"+plantID+"/date/"+date)
+// plantToday returns today's date in the plant's timezone, formatted the
+// way the sample endpoints expect.
+func plantToday(timezone string) string {
+	now := time.Now()
+	if timezone != "" {
+		if loc, err := time.LoadLocation(timezone); err == nil {
+			now = now.In(loc)
+		}
+	}
+	return now.Format("20060102")
+}
+
+func (a *Adapter) fetchPVTelemetry(ctx context.Context, plantID, date, timezone string) (models.SiteData, error) {
+	raw, err := a.get(ctx, "/api/ingecon/samplesv2/plant/{id}/date/{date}", "/api/ingecon/samplesv2/plant/"+plantID+"/date/"+date)
 	if err != nil {
 		return models.SiteData{}, err
 	}
@@ -252,7 +329,7 @@ func (a *Adapter) fetchPVTelemetry(ctx context.Context, plantID, date string) (m
 	var pac, energyInjection float64
 	var faultCode int
 	ts := time.Now()
-	if parsed, err := time.Parse("2006-01-02T15:04:05", latestTime); err == nil {
+	if parsed, ok := parseSampleTime(latestTime, timezone); ok {
 		ts = parsed
 	}
 	for _, s := range samples {
@@ -278,16 +355,16 @@ func (a *Adapter) fetchPVTelemetry(ctx context.Context, plantID, date string) (m
 	return models.SiteData{
 		BrandSiteID: plantID,
 		Timestamp:   ts,
-		Power:       pac,
-		EnergyToday: energyInjection,
+		Power:       &pac,
+		EnergyToday: &energyInjection,
 		FaultCode:   &faultCode,
 		Status:      status,
 		Raw:         raw,
 	}, nil
 }
 
-func (a *Adapter) fetchSCTelemetry(ctx context.Context, plantID, date string) (models.SiteData, error) {
-	raw, err := a.get(ctx, "/api/ems/samples/plant/"+plantID+"/date/"+date)
+func (a *Adapter) fetchSCTelemetry(ctx context.Context, plantID, date, timezone string) (models.SiteData, error) {
+	raw, err := a.get(ctx, "/api/ems/samples/plant/{id}/date/{date}", "/api/ems/samples/plant/"+plantID+"/date/"+date)
 	if err != nil {
 		return models.SiteData{}, err
 	}
@@ -299,9 +376,23 @@ func (a *Adapter) fetchSCTelemetry(ctx context.Context, plantID, date string) (m
 		return models.SiteData{}, fmt.Errorf("sc telemetry: no samples for %s", date)
 	}
 
+	// Integrate the whole day's PV series for today's yield — this endpoint
+	// has no energy register of its own, and these samples are already in
+	// hand.
+	times := make([]time.Time, 0, len(samples))
+	watts := make([]float64, 0, len(samples))
+	for _, s := range samples {
+		ts, ok := parseSampleTime(s.DateTime, timezone)
+		if !ok {
+			continue
+		}
+		times = append(times, ts)
+		watts = append(watts, s.PVGeneration)
+	}
+
 	last := samples[len(samples)-1]
 	ts := time.Now()
-	if parsed, err := time.Parse("2006-01-02T15:04:05", last.DateTime); err == nil {
+	if parsed, ok := parseSampleTime(last.DateTime, timezone); ok {
 		ts = parsed
 	}
 
@@ -310,10 +401,14 @@ func (a *Adapter) fetchSCTelemetry(ctx context.Context, plantID, date string) (m
 	grid := last.FromGridToConsumption
 	load := last.TotalConsumption
 
+	pv := last.PVGeneration
+	energy := integrateEnergyKWh(times, watts)
+
 	return models.SiteData{
 		BrandSiteID: plantID,
 		Timestamp:   ts,
-		Power:       last.PVGeneration,
+		Power:       &pv,
+		EnergyToday: &energy,
 		SOC:         &soc,
 		BatteryV:    &batV,
 		GridPower:   &grid,
@@ -325,45 +420,30 @@ func (a *Adapter) fetchSCTelemetry(ctx context.Context, plantID, date string) (m
 
 // get performs a rate-limited GET against the Ingecon API with the required
 // headers, transparently decoding a gzip response body.
-func (a *Adapter) get(ctx context.Context, path string) ([]byte, error) {
-	a.limit.wait(ctx)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.cfg.BaseURL+path, nil)
-	if err != nil {
+// get performs a rate-limited GET against the Ingecon API.
+//
+// The retry, backoff, 429 Retry-After handling and gzip decoding all live
+// in httpjson now. The local token bucket stays: it is *proactive*
+// throttling to keep us under Ingecon's documented 20 req/min ceiling in
+// the first place, which is a different job from reacting to a 429 after
+// the fact. Both matter — the bucket avoids the limit, the retry survives
+// it when a burst slips through anyway.
+func (a *Adapter) get(ctx context.Context, endpoint, path string) ([]byte, error) {
+	if err := a.limit.wait(ctx); err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-API-KEY", a.cfg.APIKey)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Encoding", "gzip")
-
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body := resp.Body
-	if resp.Header.Get("Content-Encoding") == "gzip" {
-		gz, err := gzip.NewReader(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("gzip decode: %w", err)
-		}
-		defer gz.Close()
-		body = gz
-	}
-
-	raw, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("rate limited (429): %s", string(raw))
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("returned %d: %s", resp.StatusCode, string(raw))
-	}
-	return raw, nil
+	return a.client.Do(ctx, httpjson.Request{
+		Method:   http.MethodGet,
+		URL:      a.cfg.BaseURL + path,
+		Endpoint: endpoint,
+		Header: http.Header{
+			"X-API-KEY": []string{a.cfg.APIKey},
+			// Ingecon rejects requests that don't advertise gzip; sending it
+			// ourselves disables Go's automatic decompression, so httpjson
+			// gunzips manually.
+			"Accept-Encoding": []string{"gzip"},
+		},
+	}, nil)
 }
 
 // rateLimiter is a minimal token bucket sufficient to keep this adapter
@@ -381,7 +461,13 @@ func newRateLimiter(max int, window time.Duration) *rateLimiter {
 	return &rateLimiter{max: max, window: window, windowAt: time.Now()}
 }
 
-func (r *rateLimiter) wait(ctx context.Context) {
+// wait blocks until a token is available, or returns ctx.Err().
+//
+// It used to return nothing and swallow cancellation, so a shutdown or a
+// cycle timeout during a throttle wait was indistinguishable from having
+// acquired a token — the caller went straight on to issue the request it
+// was supposed to have abandoned.
+func (r *rateLimiter) wait(ctx context.Context) error {
 	for {
 		r.mu.Lock()
 		now := time.Now()
@@ -392,14 +478,14 @@ func (r *rateLimiter) wait(ctx context.Context) {
 		if r.count < r.max {
 			r.count++
 			r.mu.Unlock()
-			return
+			return nil
 		}
 		sleepFor := r.window - now.Sub(r.windowAt)
 		r.mu.Unlock()
 
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-time.After(sleepFor):
 		}
 	}

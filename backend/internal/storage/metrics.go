@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -13,29 +12,17 @@ type MetricsRepo struct{ db *DB }
 
 func NewMetricsRepo(db *DB) *MetricsRepo { return &MetricsRepo{db: db} }
 
-// Insert writes one row of a site's 5-minute reading into the
-// site_metrics hypertable.
-func (r *MetricsRepo) Insert(ctx context.Context, siteID string, d models.SiteData) error {
-	var raw []byte
-	if len(d.Raw) > 0 {
-		raw = d.Raw
-	} else {
-		raw, _ = json.Marshal(d)
-	}
-
-	_, err := r.db.Pool.Exec(ctx, `
-		INSERT INTO site_metrics (
-			time, site_id, power_w, energy_today_kwh, energy_total_kwh, soc,
-			battery_voltage, battery_current, grid_power_w, load_power_w,
-			fault_code, status, raw_data
-		) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-	`, d.Timestamp, siteID, d.Power, d.EnergyToday, d.EnergyTotal, d.SOC,
-		d.BatteryV, d.BatteryI, d.GridPower, d.LoadPower, d.FaultCode, string(d.Status), raw)
-	if err != nil {
-		return fmt.Errorf("insert metric: %w", err)
-	}
-	return nil
-}
+// insertMetricSQL appends one reading to the site_metrics hypertable.
+// Executed by ReadingStore inside the same transaction as the site_status
+// upsert, so the dashboard's latest value and the history series can never
+// disagree about what was observed.
+const insertMetricSQL = `
+	INSERT INTO site_metrics (
+		time, site_id, power_w, energy_today_kwh, energy_total_kwh, soc,
+		battery_voltage, battery_current, grid_power_w, load_power_w,
+		fault_code, status, raw_data
+	) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+`
 
 type PowerPoint struct {
 	Time      time.Time `json:"time"`
