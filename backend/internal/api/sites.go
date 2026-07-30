@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"solar-monitor/internal/storage"
 )
 
@@ -56,7 +54,10 @@ func (d *Deps) handleFleetSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Deps) handleGetSite(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, ok := urlUUIDParam(w, r, "id")
+	if !ok {
+		return
+	}
 	site, err := d.Sites.GetByID(r.Context(), id)
 	if err != nil {
 		if err == storage.ErrNotFound {
@@ -73,7 +74,10 @@ func (d *Deps) handleGetSite(w http.ResponseWriter, r *http.Request) {
 // ?range=24h|7d|30d, using raw 5-minute data for 24h and the hourly
 // continuous aggregate for the longer windows.
 func (d *Deps) handleSiteHistory(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, ok := urlUUIDParam(w, r, "id")
+	if !ok {
+		return
+	}
 	rng := r.URL.Query().Get("range")
 	if rng == "" {
 		rng = "24h"
@@ -104,7 +108,10 @@ func (d *Deps) handleSiteHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Deps) handleSiteAlerts(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, ok := urlUUIDParam(w, r, "id")
+	if !ok {
+		return
+	}
 	alerts, err := d.Alerts.ListForSite(r.Context(), id, 50)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load site alerts")

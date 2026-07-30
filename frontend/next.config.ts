@@ -8,6 +8,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
+  // Standalone output bundles only the traced production dependencies into
+  // .next/standalone, so the Docker runtime image doesn't need node_modules
+  // (which include the three.js/recharts devDependency-heavy install).
+  output: "standalone",
 };
 
 export default nextConfig;

@@ -70,9 +70,17 @@ func requestLogger(metrics *observability.Metrics) func(http.Handler) http.Handl
 			next.ServeHTTP(rec, r)
 
 			elapsed := time.Since(start)
+			routePattern := ""
+			if rctx := chi.RouteContext(r.Context()); rctx != nil {
+				routePattern = rctx.RoutePattern()
+			}
+
+			// route is fine to carry the raw path into the log line — logs
+			// aren't cardinality-bounded the way a metrics backend is, and
+			// seeing the actual path matters for debugging a 404.
 			route := r.URL.Path
-			if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.RoutePattern() != "" {
-				route = rctx.RoutePattern()
+			if routePattern != "" {
+				route = routePattern
 			}
 
 			slog.Info("request",
@@ -84,7 +92,17 @@ func requestLogger(metrics *observability.Metrics) func(http.Handler) http.Handl
 				"request_id", observability.RequestIDFrom(r.Context()),
 			)
 			if metrics != nil {
-				metrics.ObserveHTTP(r.Method, route, rec.status, elapsed)
+				// Unlike the log line above, the metric label must stay
+				// bounded: routePattern is empty exactly when no route
+				// matched (typically a 404), and r.URL.Path is
+				// attacker-controlled on this unauthenticated surface —
+				// using it as a label would let anyone spraying random
+				// URLs mint unbounded Prometheus series.
+				metricLabel := routePattern
+				if metricLabel == "" {
+					metricLabel = "unmatched"
+				}
+				metrics.ObserveHTTP(r.Method, metricLabel, rec.status, elapsed)
 			}
 		})
 	}

@@ -4,8 +4,10 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { apiUrl, getAccessToken } from "@/lib/api-client";
+import { apiUrl, getAccessToken, refreshOnce } from "@/lib/api-client";
 import type { Alert } from "@/lib/types";
+
+const RECONNECT_DELAY_MS = 3000;
 
 // Live-updates the issues panel over SSE instead of waiting for the next
 // 30s poll. Browsers' EventSource can't set an Authorization header, so
@@ -16,10 +18,10 @@ export function useAlertStream(enabled: boolean) {
 
   useEffect(() => {
     if (!enabled) return;
-    const token = getAccessToken();
-    if (!token) return;
 
-    const es = new EventSource(apiUrl(`/api/v1/alerts/stream?token=${encodeURIComponent(token)}`));
+    let es: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
 
     const invalidate = () => {
       qc.invalidateQueries({ queryKey: ["alerts"] });
@@ -38,15 +40,50 @@ export function useAlertStream(enabled: boolean) {
       }
     };
 
-    es.addEventListener("alert.created", onCreated);
-    es.addEventListener("alert.resolved", invalidate);
-    es.addEventListener("alert.acknowledged", invalidate);
-
-    return () => {
+    const teardown = () => {
+      if (!es) return;
       es.removeEventListener("alert.created", onCreated);
       es.removeEventListener("alert.resolved", invalidate);
       es.removeEventListener("alert.acknowledged", invalidate);
+      es.removeEventListener("error", onError);
       es.close();
+      es = null;
+    };
+
+    // A dropped network connection leaves the browser retrying on its own
+    // (readyState CONNECTING) — nothing to do there. But the connect-time
+    // token in the URL expires roughly every JWT_ACCESS_TTL, and once the
+    // backend rejects a connection outright the browser does not retry
+    // (readyState goes CLOSED for good) — that silently killed live
+    // alerts after the first token expiry until this fix. Refresh the
+    // token and open a fresh connection ourselves in that case.
+    const onError = () => {
+      if (es?.readyState !== EventSource.CLOSED) return;
+      teardown();
+      if (cancelled) return;
+      reconnectTimer = setTimeout(async () => {
+        await refreshOnce();
+        if (!cancelled) connect();
+      }, RECONNECT_DELAY_MS);
+    };
+
+    const connect = () => {
+      const token = getAccessToken();
+      if (!token) return;
+
+      es = new EventSource(apiUrl(`/api/v1/alerts/stream?token=${encodeURIComponent(token)}`));
+      es.addEventListener("alert.created", onCreated);
+      es.addEventListener("alert.resolved", invalidate);
+      es.addEventListener("alert.acknowledged", invalidate);
+      es.addEventListener("error", onError);
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      teardown();
     };
   }, [enabled, qc]);
 }

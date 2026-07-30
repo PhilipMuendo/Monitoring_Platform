@@ -5,7 +5,8 @@ package config
 
 import (
 	"errors"
-	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -21,9 +22,21 @@ type DBConfig struct {
 	SSLMode  string
 }
 
+// DSN builds the connection string via net/url rather than string
+// concatenation. A generated production password containing any of
+// @ : / ? # or % breaks a hand-built "postgres://user:pass@host/db"
+// string — url.UserPassword percent-encodes it correctly instead.
 func (d DBConfig) DSN() string {
-	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		d.User, d.Password, d.Host, d.Port, d.Name, d.SSLMode)
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(d.User, d.Password),
+		Host:   net.JoinHostPort(d.Host, d.Port),
+		Path:   "/" + d.Name,
+	}
+	q := u.Query()
+	q.Set("sslmode", d.SSLMode)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 type DeyeConfig struct {
@@ -60,6 +73,10 @@ func (c SosenConfig) Configured() bool { return c.Username != "" && c.Password !
 type Config struct {
 	Port string
 	DB   DBConfig
+	// DBMaxConns bounds the Postgres pool. 0 means Load derives it from
+	// the collector's own concurrency once the brand config below is
+	// known, rather than a static guess that can starve API handlers.
+	DBMaxConns int
 
 	// JWTSecret signs new access tokens. JWTKeyID names it in the token
 	// header so it can be rotated: publish a new secret under a new ID,
@@ -114,6 +131,7 @@ func Load() (*Config, error) {
 			Name:     getEnv("DB_NAME", "solar_monitor"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
+		DBMaxConns:        getInt("DB_MAX_CONNS", 0),
 		JWTSecret:         getEnv("JWT_SECRET", "change_me_in_production"),
 		JWTKeyID:          getEnv("JWT_KEY_ID", "default"),
 		JWTPreviousKeys:   parseKeyring(getEnv("JWT_PREVIOUS_KEYS", "")),
@@ -170,6 +188,26 @@ func Load() (*Config, error) {
 		return nil, errors.New("no inverter credentials configured; set one brand's full credential set: " +
 			"DEYE_APP_ID+DEYE_APP_SECRET+DEYE_USERNAME+DEYE_PASSWORD, " +
 			"INGECON_API_KEY, or SOSEN_USERNAME+SOSEN_PASSWORD")
+	}
+
+	// A hardcoded pool size (previously a literal 20 in storage/db.go) can't
+	// keep up with the collector's own concurrency: each configured brand
+	// runs its cycle concurrently with the others, and each can have up to
+	// MaxConcurrency in-flight transactional writes at once, on top of
+	// whatever the API handlers are doing. Deriving it from the brands
+	// actually configured means the pool always has headroom instead of
+	// the collector starving request handlers under load.
+	if cfg.DBMaxConns <= 0 {
+		brands := 0
+		for _, configured := range []bool{cfg.Deye.Configured(), cfg.Ingecon.Configured(), cfg.Sosen.Configured()} {
+			if configured {
+				brands++
+			}
+		}
+		if brands == 0 {
+			brands = 1
+		}
+		cfg.DBMaxConns = brands*cfg.MaxConcurrency + 10
 	}
 
 	return cfg, nil

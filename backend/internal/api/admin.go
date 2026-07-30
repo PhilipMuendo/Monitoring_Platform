@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"solar-monitor/internal/auth"
 	"solar-monitor/internal/models"
 	"solar-monitor/internal/storage"
@@ -82,7 +80,10 @@ type updateSiteRequest struct {
 }
 
 func (d *Deps) handleUpdateSite(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, ok := urlUUIDParam(w, r, "id")
+	if !ok {
+		return
+	}
 	var req updateSiteRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -109,7 +110,10 @@ func (d *Deps) handleUpdateSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Deps) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, ok := urlUUIDParam(w, r, "id")
+	if !ok {
+		return
+	}
 	if err := d.Sites.Delete(r.Context(), id); err != nil {
 		if err == storage.ErrNotFound {
 			writeError(w, http.StatusNotFound, "site not found")

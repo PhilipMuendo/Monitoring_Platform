@@ -16,6 +16,17 @@ let accessToken: string | null = null;
 let refreshHandler: (() => Promise<string | null>) | null = null;
 let logoutHandler: (() => void) | null = null;
 
+// The access token expires roughly every JWT_ACCESS_TTL, so every request
+// in flight at that moment (sites/alerts/summary/health all poll on their
+// own timers) gets a 401 at once. Without this, each one called
+// refreshHandler() independently, firing N concurrent POST /auth/refresh
+// with the same cookie; the backend rotates on the first and revokes the
+// token, so every other concurrent refresh failed and logged the user out
+// — a spurious logout roughly every 15 minutes. Sharing one in-flight
+// promise means concurrent 401s all await the same refresh instead of
+// racing it.
+let refreshPromise: Promise<string | null> | null = null;
+
 export function setAccessToken(token: string | null) {
   accessToken = token;
 }
@@ -32,6 +43,18 @@ export function registerAuthHandlers(handlers: {
   logoutHandler = handlers.logout;
 }
 
+// Exported so the SSE hook can force a fresh token before reconnecting
+// instead of retrying with the same expired one.
+export function refreshOnce(): Promise<string | null> {
+  if (!refreshHandler) return Promise.resolve(null);
+  if (!refreshPromise) {
+    refreshPromise = refreshHandler().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
 async function request<T>(path: string, options: RequestInit = {}, allowRetry = true): Promise<T> {
   const headers = new Headers(options.headers);
   if (!(options.body instanceof FormData)) {
@@ -46,7 +69,7 @@ async function request<T>(path: string, options: RequestInit = {}, allowRetry = 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
 
   if (res.status === 401 && allowRetry && refreshHandler) {
-    const newToken = await refreshHandler();
+    const newToken = await refreshOnce();
     if (newToken) {
       return request<T>(path, options, false);
     }

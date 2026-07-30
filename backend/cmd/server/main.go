@@ -45,7 +45,7 @@ func main() {
 
 	metrics := observability.NewMetrics()
 
-	db, err := storage.Connect(ctx, cfg.DB)
+	db, err := storage.Connect(ctx, cfg.DB, cfg.DBMaxConns)
 	if err != nil {
 		log.Error("failed to connect to database", "error", err)
 		os.Exit(1)
@@ -93,6 +93,7 @@ func main() {
 	// no seeding step, because anything we could seed would be invented
 	// rather than measured.
 	go coll.Run(ctx)
+	go runTokenPruner(ctx, refreshTokens, log)
 
 	tokenIssuer, err := auth.NewTokenIssuer(
 		auth.SigningKey{ID: cfg.JWTKeyID, Secret: []byte(cfg.JWTSecret)},
@@ -206,6 +207,37 @@ func previousKeys(cfg *config.Config) []auth.SigningKey {
 		out = append(out, auth.SigningKey{ID: k.ID, Secret: []byte(k.Secret)})
 	}
 	return out
+}
+
+// runTokenPruner periodically deletes expired/long-revoked refresh
+// tokens. Runs once at boot (so a long-lived deployment doesn't wait a
+// full interval to start cleaning up) and every tokenPruneInterval after.
+const tokenPruneInterval = 6 * time.Hour
+
+func runTokenPruner(ctx context.Context, tokens *storage.RefreshTokenRepo, log *slog.Logger) {
+	prune := func() {
+		n, err := tokens.PruneExpired(ctx)
+		if err != nil {
+			log.Warn("refresh token prune failed", "error", err)
+			return
+		}
+		if n > 0 {
+			log.Info("pruned expired refresh tokens", "count", n)
+		}
+	}
+
+	prune()
+
+	ticker := time.NewTicker(tokenPruneInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
 }
 
 func getEnvOr(key, fallback string) string {

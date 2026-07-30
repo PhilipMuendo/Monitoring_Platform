@@ -17,12 +17,18 @@ type DB struct {
 	Pool *pgxpool.Pool
 }
 
-func Connect(ctx context.Context, cfg config.DBConfig) (*DB, error) {
+// maxConns bounds the pool. Callers pass config.Config.DBMaxConns, which
+// Load derives from the collector's own concurrency rather than a static
+// guess — see the comment there.
+func Connect(ctx context.Context, cfg config.DBConfig, maxConns int) (*DB, error) {
 	poolCfg, err := pgxpool.ParseConfig(cfg.DSN())
 	if err != nil {
 		return nil, fmt.Errorf("parse db config: %w", err)
 	}
-	poolCfg.MaxConns = 20
+	if maxConns <= 0 {
+		maxConns = 20
+	}
+	poolCfg.MaxConns = int32(maxConns)
 	poolCfg.MinConns = 2
 	poolCfg.HealthCheckPeriod = 30 * time.Second
 

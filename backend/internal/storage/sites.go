@@ -148,12 +148,16 @@ func (r *SiteRepo) GetByID(ctx context.Context, id string) (*models.SiteWithStat
 	return &s, nil
 }
 
-// ResolveSite resolves the internal UUID + display name for a reading
-// the collector just fetched. Returns ErrNotFound if no admin has
-// registered this brand_site_id yet (and no describer auto-registered it).
+// ResolveSite resolves the internal UUID + display name for a reading the
+// collector just fetched. Returns ErrNotFound if no admin has registered
+// this brand_site_id yet (and no describer auto-registered it), or if the
+// site has been deactivated — is_active is filtered here, not just in the
+// collector's other read paths, so deactivating a site actually stops the
+// collector from writing metrics and firing alerts for it instead of only
+// removing it from the KPI counts.
 func (r *SiteRepo) ResolveSite(ctx context.Context, brand models.Brand, brandSiteID string) (id string, name string, err error) {
 	err = r.db.Pool.QueryRow(ctx,
-		`SELECT id::text, name FROM sites WHERE brand = $1 AND brand_site_id = $2`,
+		`SELECT id::text, name FROM sites WHERE brand = $1 AND brand_site_id = $2 AND is_active`,
 		string(brand), brandSiteID,
 	).Scan(&id, &name)
 	if err != nil {
@@ -185,6 +189,34 @@ func (r *SiteRepo) IDsByBrand(ctx context.Context, brand models.Brand) ([]string
 			return nil, err
 		}
 		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// IDsByBrandKeyed lists every active site for a brand as brand_site_id ->
+// internal UUID.
+//
+// Used by the collector to detect a site that has silently dropped out of
+// a brand's plant list (deleted or unlinked in the vendor's own portal)
+// while the rest of that brand's FetchAll call still succeeds — a case
+// IDsByBrand's all-or-nothing failure path never covers, and one that
+// otherwise leaves the site's status frozen at whatever it last was,
+// forever, since it never gets another write.
+func (r *SiteRepo) IDsByBrandKeyed(ctx context.Context, brand models.Brand) (map[string]string, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT brand_site_id, id::text FROM sites WHERE brand = $1 AND is_active`, string(brand))
+	if err != nil {
+		return nil, fmt.Errorf("list keyed site ids for brand %s: %w", brand, err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]string)
+	for rows.Next() {
+		var brandSiteID, id string
+		if err := rows.Scan(&brandSiteID, &id); err != nil {
+			return nil, err
+		}
+		out[brandSiteID] = id
 	}
 	return out, rows.Err()
 }

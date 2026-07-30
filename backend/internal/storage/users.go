@@ -130,3 +130,21 @@ func (r *RefreshTokenRepo) Revoke(ctx context.Context, token string) error {
 		`UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1`, hashToken(token))
 	return err
 }
+
+// PruneExpired deletes refresh tokens that can no longer be used: expired
+// outright, or revoked more than a day ago (the grace window is only so a
+// recent rotation is still visible if anyone needs to check, not because
+// the token still works). Rotation on Refresh leaves the old row behind
+// revoked rather than deleting it, and nothing else in the normal
+// login/refresh path ever removes a row, so without this the table grows
+// forever.
+func (r *RefreshTokenRepo) PruneExpired(ctx context.Context) (int64, error) {
+	tag, err := r.db.Pool.Exec(ctx, `
+		DELETE FROM refresh_tokens
+		WHERE expires_at < NOW() OR revoked_at < NOW() - INTERVAL '1 day'
+	`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

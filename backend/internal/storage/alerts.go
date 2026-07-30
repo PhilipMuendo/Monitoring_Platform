@@ -99,13 +99,20 @@ func (r *AlertRepo) Acknowledge(ctx context.Context, id, userID string) (models.
 	return a, nil
 }
 
+// activeAlertsCap bounds ListActive. "Active" is normally small (bounded
+// by fleet size), but a stuck resolution path or a misbehaving vendor
+// feed firing the same rule in a loop could otherwise grow this query
+// unbounded — unlike ListForSite, which already takes a limit.
+const activeAlertsCap = 500
+
 // ListActive returns every unresolved alert, most severe and most recent
 // first — exactly what the dashboard's "Issues" panel renders.
 func (r *AlertRepo) ListActive(ctx context.Context) ([]models.Alert, error) {
 	rows, err := r.db.Pool.Query(ctx, alertSelect+`
 		WHERE a.resolved_at IS NULL
 		ORDER BY CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, a.created_at DESC
-	`)
+		LIMIT $1
+	`, activeAlertsCap)
 	if err != nil {
 		return nil, fmt.Errorf("list active alerts: %w", err)
 	}

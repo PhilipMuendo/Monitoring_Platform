@@ -3,8 +3,6 @@ package api
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
-
 	"solar-monitor/internal/auth"
 	"solar-monitor/internal/storage"
 )
@@ -22,7 +20,10 @@ func (d *Deps) handleListActiveAlerts(w http.ResponseWriter, r *http.Request) {
 // for why acknowledgement also resolves it) and pushes the update to any
 // connected SSE clients so it disappears from the issues panel live.
 func (d *Deps) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, ok := urlUUIDParam(w, r, "id")
+	if !ok {
+		return
+	}
 	u, _ := auth.UserFromContext(r.Context())
 
 	alert, err := d.Alerts.Acknowledge(r.Context(), id, u.ID)

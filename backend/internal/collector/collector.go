@@ -222,7 +222,46 @@ func (c *Collector) pollAdapter(ctx context.Context, a models.BrandAdapter) (Bra
 	}
 	wg.Wait()
 
+	c.markMissingUnknown(ctx, brand, readings, &stats)
+
 	return stats, errCount
+}
+
+// markMissingUnknown flags any active, registered site of this brand that
+// FetchAll did not return a reading for this cycle.
+//
+// A site can vanish from a vendor's plant list — deleted or unlinked in
+// their portal — while the rest of the brand's sites are still read
+// successfully, so markBrandUnknown's all-or-nothing failure path never
+// catches it. Without this, such a site never receives another write and
+// its status (and any alert state) freezes forever at whatever it last
+// was, silently, since nothing else re-checks it independently.
+func (c *Collector) markMissingUnknown(ctx context.Context, brand models.Brand, readings []models.SiteData, stats *BrandStats) {
+	if c.sites == nil || c.readings == nil {
+		return
+	}
+
+	registered, err := c.sites.IDsByBrandKeyed(ctx, brand)
+	if err != nil {
+		slog.Error("could not list registered sites to check for missing ones", "brand", brand, "error", err)
+		return
+	}
+
+	seen := make(map[string]struct{}, len(readings))
+	for _, r := range readings {
+		seen[r.BrandSiteID] = struct{}{}
+	}
+
+	for brandSiteID, id := range registered {
+		if _, ok := seen[brandSiteID]; ok {
+			continue
+		}
+		if err := c.readings.RecordStatusOnly(ctx, id, models.StatusUnknown); err != nil {
+			slog.Warn("mark missing site unknown failed", "site_id", id, "error", err)
+			continue
+		}
+		stats.Unknown++
+	}
 }
 
 // markBrandUnknown flags every registered site of a brand as unreachable
@@ -264,8 +303,8 @@ func (c *Collector) processReading(ctx context.Context, brand models.Brand, read
 			slog.Error("resolve site failed", "brand", brand, "brand_site_id", reading.BrandSiteID, "error", err)
 			return outcomeOffline, true
 		}
-		// Not registered yet and no describer picked it up. Nothing to
-		// write; the next discovery pass will create it.
+		// Either not registered yet (no describer picked it up) or an
+		// admin deactivated it — either way, nothing to write.
 		return outcomeOffline, false
 	}
 

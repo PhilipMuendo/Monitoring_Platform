@@ -16,12 +16,31 @@ func NewMetricsRepo(db *DB) *MetricsRepo { return &MetricsRepo{db: db} }
 // Executed by ReadingStore inside the same transaction as the site_status
 // upsert, so the dashboard's latest value and the history series can never
 // disagree about what was observed.
+//
+// ON CONFLICT (site_id, time) DO UPDATE rather than a plain INSERT: a
+// vendor whose sampling cadence is slower than POLL_INTERVAL re-serves the
+// same timestamp on consecutive cycles, and a plain insert would land a
+// duplicate row for it every time, skewing the hourly averages behind the
+// 7d/30d charts. The upsert makes a repeated cycle idempotent instead —
+// the row just gets refreshed with (identical) data.
 const insertMetricSQL = `
 	INSERT INTO site_metrics (
 		time, site_id, power_w, energy_today_kwh, energy_total_kwh, soc,
 		battery_voltage, battery_current, grid_power_w, load_power_w,
 		fault_code, status, raw_data
 	) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	ON CONFLICT (site_id, time) DO UPDATE SET
+		power_w          = EXCLUDED.power_w,
+		energy_today_kwh = EXCLUDED.energy_today_kwh,
+		energy_total_kwh = EXCLUDED.energy_total_kwh,
+		soc              = EXCLUDED.soc,
+		battery_voltage  = EXCLUDED.battery_voltage,
+		battery_current  = EXCLUDED.battery_current,
+		grid_power_w     = EXCLUDED.grid_power_w,
+		load_power_w     = EXCLUDED.load_power_w,
+		fault_code       = EXCLUDED.fault_code,
+		status           = EXCLUDED.status,
+		raw_data         = EXCLUDED.raw_data
 `
 
 type PowerPoint struct {

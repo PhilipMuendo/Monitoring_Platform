@@ -36,6 +36,10 @@ func (s *Service) Login(ctx context.Context, email, password string) (*Result, e
 	user, err := s.users.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
+			// Run the same bcrypt work a real check would incur, so a
+			// nonexistent account isn't distinguishable from a wrong
+			// password by response time.
+			CheckPassword(dummyHash, password)
 			return nil, ErrInvalidCredentials
 		}
 		return nil, err

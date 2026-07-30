@@ -48,6 +48,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       POLL_INTERVAL: ${POLL_INTERVAL:-5m}
       COLLECTOR_MAX_CONCURRENCY: ${COLLECTOR_MAX_CONCURRENCY:-10}
+      DB_MAX_CONNS: ${DB_MAX_CONNS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DEYE_APP_ID: ${DEYE_APP_ID:-}
       DEYE_APP_SECRET: ${DEYE_APP_SECRET:-}
@@ -63,6 +64,13 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        # NEXT_PUBLIC_* is inlined into the client bundle at build time, so
+        # it has to reach the image here — the `environment:` block below
+        # only affects the running container, which Next.js never reads
+        # NEXT_PUBLIC_* from. Changing this value requires a rebuild
+        # (`docker compose up --build frontend`), not just a restart.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     container_name: solar-monitor-frontend
     restart: unless-stopped
     depends_on:
