@@ -11,9 +11,9 @@ export function UsersAdminTable() {
   const { data: users, isLoading } = useUsers();
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Staff accounts</h2>
+        <h2 className="label-caps text-xs font-semibold text-muted-foreground">Staff Accounts</h2>
         <CreateUserDialog />
       </div>
 
@@ -24,7 +24,7 @@ export function UsersAdminTable() {
           ))}
         </div>
       ) : (
-        <Table>
+        <Table className="border border-border">
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>

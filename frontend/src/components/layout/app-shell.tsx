@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut, MonitorPlay, Settings, Sun } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTheme } from "next-themes";
+import { LayoutGrid, LogOut, Moon, MonitorPlay, ShieldCheck, Sun as SunIcon, SunMedium } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -14,13 +16,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAlertStream } from "@/hooks/use-alert-stream";
+import { useHealth } from "@/hooks/use-health";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/admin", label: "Admin", icon: Settings, roles: ["admin"] as const },
+  { href: "/", label: "Fleet" },
+  { href: "/admin", label: "Admin", roles: ["admin"] as const },
 ];
 
 function initials(name: string) {
@@ -32,6 +36,82 @@ function initials(name: string) {
     .toUpperCase();
 }
 
+function useClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
+}
+
+function HeaderClock() {
+  const now = useClock();
+  return (
+    <div className="hidden items-baseline gap-1.5 font-mono text-xs tabular-nums text-muted-foreground md:flex">
+      <span className="text-foreground">
+        {now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+      </span>
+      <span className="label-caps text-[10px]">Local</span>
+    </div>
+  );
+}
+
+function SystemStatusIndicator() {
+  const { data: health } = useHealth();
+  const healthy = health?.status === "healthy";
+  const label = !health ? "Connecting" : healthy ? "Live" : "Degraded";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="flex items-center gap-1.5 rounded-sm border border-border px-2 py-1">
+          <span className="relative flex size-1.5">
+            {health && (
+              <span
+                className={cn(
+                  "absolute inline-flex h-full w-full animate-ping rounded-full opacity-60",
+                  healthy ? "bg-status-online" : "bg-status-warning",
+                )}
+              />
+            )}
+            <span
+              className={cn(
+                "relative inline-flex size-1.5 rounded-full",
+                !health ? "bg-status-offline" : healthy ? "bg-status-online" : "bg-status-warning",
+              )}
+            />
+          </span>
+          <span className="label-caps hidden text-[10px] font-semibold text-muted-foreground sm:inline">{label}</span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {health ? `Last collection ${new Date(health.metrics.last_collection).toLocaleTimeString()}` : "Waiting for telemetry link"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Toggle theme"
+          onClick={() => setTheme(isDark ? "light" : "dark")}
+        >
+          {isDark ? <Moon className="size-4" /> : <SunMedium className="size-4" />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{isDark ? "Switch to light mode" : "Switch to dark mode"}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, logout, hasRole } = useAuth();
   const pathname = usePathname();
@@ -41,14 +121,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4">
-          <Link href="/" className="flex items-center gap-2 font-semibold">
-            <Sun className="size-5 text-solar" />
-            <span className="hidden sm:inline">Solar Fleet Monitor</span>
+      <header className="sticky top-0 z-40 border-b border-border bg-background">
+        <div className="flex h-12 items-center gap-1 px-3 sm:px-4">
+          <Link href="/" className="flex shrink-0 items-center gap-2 pr-3">
+            <span className="flex size-6 items-center justify-center rounded-sm bg-solar/15 text-solar">
+              <SunIcon className="size-3.5" strokeWidth={2.25} />
+            </span>
+            <span className="hidden font-mono text-[13px] font-semibold tracking-tight sm:inline">
+              SOLAR FLEET <span className="text-muted-foreground">OPS</span>
+            </span>
           </Link>
 
-          <nav className="flex items-center gap-1">
+          <div className="hidden h-5 w-px bg-border sm:block" />
+
+          <nav className="flex h-full items-center gap-0.5 pl-1">
             {NAV_LINKS.filter((link) => !link.roles || hasRole(...link.roles)).map((link) => {
               const active = pathname === link.href;
               return (
@@ -56,39 +142,67 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   key={link.href}
                   href={link.href}
                   className={cn(
-                    "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                    active ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent/50",
+                    "label-caps relative flex h-full items-center px-2.5 text-[11px] font-semibold transition-colors",
+                    active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  <link.icon className="size-4" />
                   {link.label}
+                  <span
+                    className={cn(
+                      "absolute inset-x-2.5 bottom-0 h-0.5 rounded-full transition-opacity",
+                      active ? "bg-solar opacity-100" : "opacity-0",
+                    )}
+                  />
                 </Link>
               );
             })}
           </nav>
 
-          <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" size="sm" asChild>
-              <a href="/wall" target="_blank" rel="noopener noreferrer">
-                <MonitorPlay className="size-4" />
-                Wall display
-              </a>
-            </Button>
+          <div className="ml-auto flex items-center gap-1.5">
+            <SystemStatusIndicator />
+            <div className="hidden h-5 w-px bg-border md:block" />
+            <HeaderClock />
+            <div className="h-5 w-px bg-border" />
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon-sm" asChild>
+                  <a href="/wall" target="_blank" rel="noopener noreferrer" aria-label="Open wall display">
+                    <MonitorPlay className="size-4" />
+                  </a>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Open wall display</TooltipContent>
+            </Tooltip>
+
+            <ThemeToggle />
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-2 rounded-full">
-                  <Avatar className="size-8">
-                    <AvatarFallback className="text-xs">{user ? initials(user.name || user.email) : "?"}</AvatarFallback>
+                <button className="ml-0.5 flex items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
+                  <Avatar className="size-6">
+                    <AvatarFallback className="text-[10px] font-semibold">
+                      {user ? initials(user.name || user.email) : "?"}
+                    </AvatarFallback>
                   </Avatar>
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" className="w-52">
                 <DropdownMenuLabel>
                   <div className="truncate text-sm font-medium">{user?.name}</div>
                   <div className="truncate text-xs font-normal text-muted-foreground">{user?.email}</div>
-                  <div className="mt-0.5 text-xs font-normal capitalize text-muted-foreground">{user?.role}</div>
+                  <div className="mt-1 flex items-center gap-1 text-[10px] font-normal text-muted-foreground">
+                    <ShieldCheck className="size-3" />
+                    <span className="label-caps">{user?.role}</span>
+                  </div>
                 </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/">
+                    <LayoutGrid className="size-4" />
+                    Fleet overview
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   variant="destructive"
@@ -106,7 +220,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">{children}</main>
+      <main className="mx-auto w-full max-w-[1600px] flex-1 px-3 py-4 sm:px-4 sm:py-5">{children}</main>
     </div>
   );
 }

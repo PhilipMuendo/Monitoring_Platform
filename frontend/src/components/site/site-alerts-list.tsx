@@ -1,7 +1,6 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSiteAlerts } from "@/hooks/use-alerts";
@@ -18,11 +17,11 @@ export function SiteAlertsList({ siteId }: { siteId: string }) {
   const { data: alerts, isLoading } = useSiteAlerts(siteId);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Alert History</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <div className="border border-border bg-card">
+      <div className="border-b border-border px-4 py-2.5">
+        <h2 className="label-caps text-xs font-semibold text-muted-foreground">Alert History</h2>
+      </div>
+      <div className="p-4">
         {isLoading ? (
           <div className="space-y-2">
             {[...Array(3)].map((_, i) => (
@@ -34,30 +33,30 @@ export function SiteAlertsList({ siteId }: { siteId: string }) {
         ) : (
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Type</TableHead>
-                <TableHead>Message</TableHead>
-                <TableHead>Raised</TableHead>
-                <TableHead>Status</TableHead>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="label-caps text-[10px]">Type</TableHead>
+                <TableHead className="label-caps text-[10px]">Message</TableHead>
+                <TableHead className="label-caps text-[10px]">Raised</TableHead>
+                <TableHead className="label-caps text-[10px]">Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {alerts.map((alert) => (
                 <TableRow key={alert.id}>
                   <TableCell>
-                    <Badge variant={alert.severity === "critical" ? "destructive" : "outline"}>
+                    <Badge variant={alert.severity === "critical" ? "destructive" : "outline"} className="rounded-sm">
                       {TYPE_LABEL[alert.type] ?? alert.type}
                     </Badge>
                   </TableCell>
                   <TableCell className="max-w-xs truncate text-sm">{alert.message}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{formatRelativeTime(alert.created_at)}</TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">{formatRelativeTime(alert.created_at)}</TableCell>
                   <TableCell className="text-xs">
                     {alert.resolved_at ? (
                       <span className="text-muted-foreground">
                         {alert.acknowledged ? "Acknowledged" : "Resolved"}
                       </span>
                     ) : (
-                      <span className="font-medium text-status-critical">Active</span>
+                      <span className="label-caps font-semibold text-status-critical">Active</span>
                     )}
                   </TableCell>
                 </TableRow>
@@ -65,7 +64,7 @@ export function SiteAlertsList({ siteId }: { siteId: string }) {
             </TableBody>
           </Table>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

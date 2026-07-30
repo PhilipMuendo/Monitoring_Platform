@@ -30,9 +30,9 @@ export function SitesAdminTable() {
   const deleteSite = useDeleteSite();
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Sites</h2>
+        <h2 className="label-caps text-xs font-semibold text-muted-foreground">Sites</h2>
         <CreateSiteDialog />
       </div>
 
@@ -43,7 +43,7 @@ export function SitesAdminTable() {
           ))}
         </div>
       ) : (
-        <Table>
+        <Table className="border border-border">
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>

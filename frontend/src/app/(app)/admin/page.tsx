@@ -20,8 +20,11 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Admin</h1>
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight">Administration</h1>
+        <p className="label-caps mt-0.5 text-[11px] text-muted-foreground">Fleet configuration &amp; access control</p>
+      </div>
       <Tabs defaultValue="sites">
         <TabsList>
           <TabsTrigger value="sites">Sites</TabsTrigger>

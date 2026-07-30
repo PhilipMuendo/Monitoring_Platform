@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useRouter } from "next/navigation";
@@ -6,7 +5,6 @@ import { useEffect, useState } from "react";
 import { Loader2, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api-client";
@@ -39,19 +37,29 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader className="items-center text-center">
-          <div className="mb-2 flex size-12 items-center justify-center rounded-full bg-solar/15">
-            <Sun className="size-6 text-solar" />
+    <div className="dark flex min-h-screen items-center justify-center bg-background bg-grid-pattern px-4 text-foreground">
+      <div className="w-full max-w-[380px]">
+        <div className="mb-6 flex flex-col items-center gap-3 text-center">
+          <span className="flex size-9 items-center justify-center rounded-sm bg-solar/15 text-solar">
+            <Sun className="size-5" strokeWidth={2.25} />
+          </span>
+          <div>
+            <h1 className="font-mono text-base font-semibold tracking-tight">
+              SOLAR FLEET <span className="text-muted-foreground">OPS</span>
+            </h1>
+            <p className="label-caps mt-1 text-[11px] text-muted-foreground">Distributed generation monitoring</p>
           </div>
-          <CardTitle className="text-xl">Solar Fleet Monitor</CardTitle>
-          <CardDescription>Sign in to view your fleet</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onSubmit} className="space-y-4">
+        </div>
+
+        <div className="border border-border bg-card">
+          <div className="border-b border-border px-5 py-3">
+            <p className="label-caps text-[11px] font-semibold text-muted-foreground">Operator sign-in</p>
+          </div>
+          <form onSubmit={onSubmit} className="space-y-4 px-5 py-5">
             <div className="space-y-1.5">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email" className="label-caps text-[11px] text-muted-foreground">
+                Email
+              </Label>
               <Input
                 id="email"
                 type="email"
@@ -59,10 +67,13 @@ export default function LoginPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                className="font-mono text-sm"
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password" className="label-caps text-[11px] text-muted-foreground">
+                Password
+              </Label>
               <Input
                 id="password"
                 type="password"
@@ -70,16 +81,19 @@ export default function LoginPage() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                className="font-mono text-sm"
               />
             </div>
-            {error && <p className="text-sm text-status-critical">{error}</p>}
+            {error && <p className="border border-status-critical/30 bg-status-critical/10 px-3 py-2 text-xs text-status-critical">{error}</p>}
             <Button type="submit" className="w-full" disabled={submitting}>
               {submitting && <Loader2 className="size-4 animate-spin" />}
               Sign in
             </Button>
           </form>
-        </CardContent>
-      </Card>
+        </div>
+
+        <p className="label-caps mt-4 text-center text-[10px] text-muted-foreground">Authorized personnel only</p>
+      </div>
     </div>
   );
 }

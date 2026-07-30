@@ -18,18 +18,18 @@ export interface PowerFlowPalette {
 
 export const POWER_FLOW_COLORS: Record<"light" | "dark", PowerFlowPalette> = {
   light: {
-    solar: "#eb9b00",
-    battery: "#2cbb67",
-    grid: "#1d84f5",
-    load: "#9d57de",
-    critical: "#f92434",
+    solar: "#cf9b00",
+    battery: "#339a83",
+    grid: "#007cd9",
+    load: "#8451c9",
+    critical: "#df202e",
   },
   dark: {
-    solar: "#f6af00",
-    battery: "#43cc76",
-    grid: "#53a0ff",
-    load: "#bf83fe",
-    critical: "#ff4c4d",
+    solar: "#e3ae28",
+    battery: "#4abba1",
+    grid: "#449df0",
+    load: "#a87eeb",
+    critical: "#f54748",
   },
 };
 

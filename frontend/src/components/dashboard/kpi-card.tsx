@@ -1,4 +1,3 @@
-import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 interface KpiCardProps {
@@ -7,22 +6,23 @@ interface KpiCardProps {
   value: string;
   sublabel?: string;
   colorClass?: string;
-  bgClass?: string;
+  accentClass?: string;
 }
 
-export function KpiCard({ icon: Icon, label, value, sublabel, colorClass = "text-primary", bgClass = "bg-primary/10" }: KpiCardProps) {
+// A single readout cell in the fleet telemetry strip — deliberately not a
+// soft "card with icon blob": a thin colored rule on the top edge carries
+// the semantic accent, the icon stays a muted mark, and the mono value is
+// the only thing meant to draw the eye.
+export function KpiCard({ icon: Icon, label, value, sublabel, colorClass = "text-foreground", accentClass = "bg-foreground/40" }: KpiCardProps) {
   return (
-    <Card className="gap-3 py-4">
-      <CardContent className="flex items-center gap-3 px-4">
-        <div className={cn("flex size-10 shrink-0 items-center justify-center rounded-full", bgClass)}>
-          <Icon className={cn("size-5", colorClass)} strokeWidth={2} />
-        </div>
-        <div className="min-w-0">
-          <div className="text-xs text-muted-foreground">{label}</div>
-          <div className="truncate font-mono text-xl font-semibold tabular-nums">{value}</div>
-          {sublabel && <div className="truncate text-xs text-muted-foreground">{sublabel}</div>}
-        </div>
-      </CardContent>
-    </Card>
+    <div className="relative flex flex-col gap-1 bg-card px-3 py-2.5">
+      <span className={cn("absolute inset-x-0 top-0 h-0.5", accentClass)} />
+      <div className="flex items-center justify-between gap-2">
+        <span className="label-caps truncate text-[10px] font-semibold text-muted-foreground">{label}</span>
+        <Icon className={cn("size-3.5 shrink-0", colorClass)} strokeWidth={2} />
+      </div>
+      <div className={cn("truncate font-mono text-xl leading-none font-semibold tabular-nums", colorClass)}>{value}</div>
+      {sublabel && <div className="truncate text-[11px] text-muted-foreground">{sublabel}</div>}
+    </div>
   );
 }

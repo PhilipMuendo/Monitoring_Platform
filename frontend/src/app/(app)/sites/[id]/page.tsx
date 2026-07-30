@@ -31,7 +31,7 @@ export default function SiteDetailPage() {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-24 w-full" />
         <Skeleton className="h-80 w-full" />
       </div>
     );
@@ -40,8 +40,8 @@ export default function SiteDetailPage() {
   if (isError || !site) {
     return (
       <div className="space-y-4">
-        <Link href="/" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:underline">
-          <ArrowLeft className="size-4" /> Back to dashboard
+        <Link href="/" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="size-4" /> Back to fleet
         </Link>
         <p className="text-sm text-muted-foreground">Couldn&apos;t load this site. It may have been removed.</p>
       </div>
@@ -49,50 +49,59 @@ export default function SiteDetailPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div>
-        <Link href="/" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:underline">
-          <ArrowLeft className="size-4" /> Back to dashboard
+        <Link
+          href="/"
+          className="label-caps inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-3.5" /> Fleet
         </Link>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <h1 className="text-2xl font-semibold">{site.name}</h1>
+        <div className="mt-2 flex flex-wrap items-center gap-2.5">
+          <h1 className="text-xl font-semibold tracking-tight">{site.name}</h1>
           <BrandBadge brand={site.brand} />
           <StatusBadge status={site.status} />
         </div>
-        <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
+        <p className="mt-1 flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
           <MapPin className="size-3.5" />
           {site.location} · {site.capacity_kw.toFixed(1)} kW capacity · last seen {formatRelativeTime(site.last_seen_at)}
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <KpiCard icon={Sun} label="Solar" value={formatPower(site.power_w)} colorClass="text-solar" bgClass="bg-solar/10" />
-        <KpiCard icon={Zap} label="Load" value={formatPower(site.load_power_w)} colorClass="text-load" bgClass="bg-load/10" />
+      <div className="grid grid-cols-2 gap-px overflow-hidden border border-border bg-border sm:grid-cols-3 lg:grid-cols-6">
+        <KpiCard icon={Sun} label="Solar" value={formatPower(site.power_w)} colorClass="text-solar" accentClass="bg-solar" />
+        <KpiCard icon={Zap} label="Load" value={formatPower(site.load_power_w)} colorClass="text-load" accentClass="bg-load" />
         <KpiCard
           icon={Gauge}
           label="Grid"
           value={formatPower(Math.abs(site.grid_power_w ?? 0))}
           sublabel={(site.grid_power_w ?? 0) >= 0 ? "importing" : "exporting"}
           colorClass="text-grid"
-          bgClass="bg-grid/10"
+          accentClass="bg-grid"
         />
-        <KpiCard icon={Battery} label="Battery" value={formatPercent(site.soc)} colorClass="text-battery" bgClass="bg-battery/10" />
-        <KpiCard icon={Sun} label="Energy today" value={formatEnergy(site.energy_today_kwh)} colorClass="text-solar" bgClass="bg-solar/10" />
-        <KpiCard icon={Sun} label="Energy total" value={formatEnergy(site.energy_total_kwh)} colorClass="text-solar" bgClass="bg-solar/10" />
+        <KpiCard icon={Battery} label="Battery" value={formatPercent(site.soc)} colorClass="text-battery" accentClass="bg-battery" />
+        <KpiCard icon={Sun} label="Energy today" value={formatEnergy(site.energy_today_kwh)} colorClass="text-solar" accentClass="bg-solar" />
+        <KpiCard icon={Sun} label="Energy total" value={formatEnergy(site.energy_total_kwh)} colorClass="text-solar" accentClass="bg-solar" />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Power History</CardTitle>
+      <Card className="gap-3 rounded-sm py-3">
+        <CardHeader className="px-4">
+          <CardTitle className="label-caps text-xs font-semibold text-muted-foreground">Power History</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-4">
           <Tabs value={range} onValueChange={(v) => setRange(v as Range)}>
-            <TabsList>
-              <TabsTrigger value="24h">24 hours</TabsTrigger>
-              <TabsTrigger value="7d">7 days</TabsTrigger>
-              <TabsTrigger value="30d">30 days</TabsTrigger>
+            <TabsList className="h-7">
+              <TabsTrigger value="24h" className="text-xs">
+                24 hours
+              </TabsTrigger>
+              <TabsTrigger value="7d" className="text-xs">
+                7 days
+              </TabsTrigger>
+              <TabsTrigger value="30d" className="text-xs">
+                30 days
+              </TabsTrigger>
             </TabsList>
-            <TabsContent value={range} className="space-y-4">
+            <TabsContent value={range} className="space-y-4 pt-3">
               {historyLoading || !history ? (
                 <Skeleton className="h-72 w-full" />
               ) : history.points.length === 0 ? (

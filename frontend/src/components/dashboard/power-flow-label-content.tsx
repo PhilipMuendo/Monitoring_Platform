@@ -30,19 +30,19 @@ export function PowerFlowLabelContent({
   size = 88,
 }: PowerFlowLabelContentProps) {
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 text-center">
+    <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-center">
       <motion.div
         className={cn("relative flex items-center justify-center rounded-full border", bgClass)}
-        style={{ width: size * 0.6, height: size * 0.6 }}
-        animate={active ? { scale: [1, 1.05, 1] } : { scale: 1 }}
-        transition={{ duration: 2.4, repeat: active ? Infinity : 0, ease: "easeInOut" }}
+        style={{ width: size * 0.56, height: size * 0.56 }}
+        animate={active ? { scale: [1, 1.02, 1] } : { scale: 1 }}
+        transition={{ duration: 3, repeat: active ? Infinity : 0, ease: "easeInOut" }}
       >
-        {active && <span className={cn("absolute inset-0 animate-ping rounded-full opacity-20", bgClass)} />}
-        <Icon className={cn("size-5", colorClass)} strokeWidth={2} />
+        {active && <span className={cn("absolute inset-0 animate-ping rounded-full opacity-10", bgClass)} />}
+        <Icon className={cn("size-4.5", colorClass)} strokeWidth={2} />
       </motion.div>
-      <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+      <div className="label-caps text-[10px] font-semibold text-muted-foreground">{label}</div>
       <div className={cn("font-mono text-sm font-semibold tabular-nums", colorClass)}>{value}</div>
-      {sublabel && <div className="text-[10px] leading-tight text-muted-foreground">{sublabel}</div>}
+      {sublabel && <div className="whitespace-nowrap text-[10px] leading-tight text-muted-foreground">{sublabel}</div>}
     </div>
   );
 }

@@ -1,26 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { AlertOctagon, AlertTriangle, CheckCircle2, WifiOff } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BrandBadge } from "@/components/brand-badge";
 import { useAcknowledgeAlert, useActiveAlerts } from "@/hooks/use-alerts";
 import { useAuth } from "@/lib/auth-context";
 import { formatRelativeTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type { Alert, AlertType } from "@/lib/types";
-
-const TYPE_ICON: Record<AlertType, React.ComponentType<{ className?: string }>> = {
-  offline: WifiOff,
-  fault: AlertOctagon,
-  production_drop: AlertTriangle,
-  battery_issue: AlertTriangle,
-};
 
 const TYPE_LABEL: Record<AlertType, string> = {
   offline: "Offline",
@@ -37,28 +29,30 @@ export function IssuesPanel() {
   const canAcknowledge = hasRole("admin", "technician");
 
   return (
-    <Card className="flex h-full flex-col">
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-2">
-          Active Issues
-          {!!alerts?.length && <Badge variant="destructive">{alerts.length}</Badge>}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex-1 px-0">
+    <div className="flex h-full flex-col bg-card">
+      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+        <h2 className="label-caps text-xs font-semibold text-muted-foreground">Active Issues</h2>
+        {!!alerts?.length && (
+          <span className="flex h-4.5 min-w-4.5 items-center justify-center rounded-sm bg-status-critical/15 px-1 font-mono text-[10px] font-bold text-status-critical">
+            {alerts.length}
+          </span>
+        )}
+      </div>
+      <div className="flex-1">
         {isLoading ? (
-          <div className="space-y-3 px-6">
+          <div className="space-y-2 p-4">
             {[...Array(4)].map((_, i) => (
               <Skeleton key={i} className="h-14 w-full" />
             ))}
           </div>
         ) : !alerts?.length ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
-            <CheckCircle2 className="size-8 text-status-online" />
-            <p className="text-sm">All systems normal</p>
+          <div className="flex flex-col items-center justify-center gap-2 py-14 text-center text-muted-foreground">
+            <CheckCircle2 className="size-7 text-status-online" />
+            <p className="text-xs">All systems normal</p>
           </div>
         ) : (
-          <ScrollArea className="h-[360px] px-6">
-            <div className="flex flex-col gap-2 pb-2">
+          <ScrollArea className="h-[360px]">
+            <div className="flex flex-col">
               {alerts.map((alert) => (
                 <AlertRow
                   key={alert.id}
@@ -77,8 +71,8 @@ export function IssuesPanel() {
             </div>
           </ScrollArea>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -95,7 +89,6 @@ function AlertRow({
   onAcknowledge: () => void;
   acknowledging: boolean;
 }) {
-  const Icon = TYPE_ICON[alert.type];
   const isCritical = alert.severity === "critical";
 
   return (
@@ -104,24 +97,33 @@ function AlertRow({
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(e) => e.key === "Enter" && onOpen()}
-      className="flex cursor-pointer items-start gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-accent"
+      className="flex cursor-pointer items-start gap-3 border-b border-border px-4 py-2.5 transition-colors last:border-b-0 hover:bg-accent"
     >
-      <Icon className={isCritical ? "mt-0.5 size-4 shrink-0 text-status-critical" : "mt-0.5 size-4 shrink-0 text-status-warning"} />
+      <span
+        className={cn("mt-1.5 size-2 shrink-0 rounded-full", isCritical ? "bg-status-critical" : "bg-status-warning")}
+        aria-hidden
+      />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-sm font-medium">{alert.site_name ?? "Unknown site"}</span>
+          <span className="truncate text-sm font-medium">{alert.site_name ?? "Unknown site"}</span>
           {alert.brand && <BrandBadge brand={alert.brand} />}
-          <Badge variant={isCritical ? "destructive" : "outline"} className="text-[10px]">
+          <span
+            className={cn(
+              "label-caps text-[9px] font-semibold",
+              isCritical ? "text-status-critical" : "text-muted-foreground",
+            )}
+          >
             {TYPE_LABEL[alert.type]}
-          </Badge>
+          </span>
         </div>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">{alert.message}</p>
-        <p className="mt-0.5 text-[10px] text-muted-foreground">{formatRelativeTime(alert.created_at)}</p>
+        <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">{formatRelativeTime(alert.created_at)}</p>
       </div>
       {canAcknowledge && (
         <Button
           size="sm"
           variant="outline"
+          className="h-6 px-2 text-[11px]"
           disabled={acknowledging}
           onClick={(e) => {
             e.stopPropagation();

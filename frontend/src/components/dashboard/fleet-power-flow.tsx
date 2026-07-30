@@ -9,14 +9,14 @@ import { POWER_FLOW_THRESHOLD_W, scalePowerFlowSpeed, scalePowerFlowWidth } from
 import type { FleetSummary } from "@/lib/types";
 
 const VIEW_W = 480;
-const VIEW_H = 300;
+const VIEW_H = 320;
 const THRESHOLD_W = POWER_FLOW_THRESHOLD_W;
 
 const POS = {
-  solar: { x: VIEW_W / 2, y: 40 },
+  solar: { x: VIEW_W / 2, y: 48 },
   grid: { x: 56, y: VIEW_H / 2 },
   load: { x: VIEW_W - 56, y: VIEW_H / 2 },
-  battery: { x: VIEW_W / 2, y: VIEW_H - 40 },
+  battery: { x: VIEW_W / 2, y: VIEW_H - 48 },
   hub: { x: VIEW_W / 2, y: VIEW_H / 2 },
 };
 

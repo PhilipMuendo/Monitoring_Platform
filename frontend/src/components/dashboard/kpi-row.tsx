@@ -6,14 +6,14 @@ import type { FleetSummary } from "@/lib/types";
 
 export function KpiRow({ summary }: { summary: FleetSummary }) {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-px overflow-hidden border border-border bg-border sm:grid-cols-3 lg:grid-cols-6">
       <KpiCard
         icon={MapPin}
         label="Fleet"
         value={`${summary.online_sites}/${summary.total_sites}`}
         sublabel="sites online"
         colorClass="text-status-online"
-        bgClass="bg-status-online/10"
+        accentClass="bg-status-online"
       />
       <KpiCard
         icon={Sun}
@@ -21,7 +21,7 @@ export function KpiRow({ summary }: { summary: FleetSummary }) {
         value={formatPower(summary.total_power_w)}
         sublabel="right now"
         colorClass="text-solar"
-        bgClass="bg-solar/10"
+        accentClass="bg-solar"
       />
       <KpiCard
         icon={Zap}
@@ -29,7 +29,7 @@ export function KpiRow({ summary }: { summary: FleetSummary }) {
         value={formatEnergy(summary.energy_today_kwh)}
         sublabel="fleet total"
         colorClass="text-solar"
-        bgClass="bg-solar/10"
+        accentClass="bg-solar"
       />
       <KpiCard
         icon={BatteryCharging}
@@ -37,7 +37,7 @@ export function KpiRow({ summary }: { summary: FleetSummary }) {
         value={formatPercent(summary.avg_soc)}
         sublabel="state of charge"
         colorClass="text-battery"
-        bgClass="bg-battery/10"
+        accentClass="bg-battery"
       />
       <KpiCard
         icon={Gauge}
@@ -45,7 +45,7 @@ export function KpiRow({ summary }: { summary: FleetSummary }) {
         value={formatPower(Math.abs(summary.total_grid_w))}
         sublabel={summary.total_grid_w >= 0 ? "importing" : "exporting"}
         colorClass="text-grid"
-        bgClass="bg-grid/10"
+        accentClass="bg-grid"
       />
       <KpiCard
         icon={AlertTriangle}
@@ -53,7 +53,7 @@ export function KpiRow({ summary }: { summary: FleetSummary }) {
         value={String(summary.active_alerts)}
         sublabel={summary.active_alerts === 0 ? "all clear" : "need attention"}
         colorClass={summary.active_alerts > 0 ? "text-status-critical" : "text-status-online"}
-        bgClass={summary.active_alerts > 0 ? "bg-status-critical/10" : "bg-status-online/10"}
+        accentClass={summary.active_alerts > 0 ? "bg-status-critical" : "bg-status-online"}
       />
     </div>
   );

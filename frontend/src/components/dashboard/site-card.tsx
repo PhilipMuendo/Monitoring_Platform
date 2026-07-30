@@ -1,46 +1,57 @@
-import Link from "next/link";
-import { BatteryCharging } from "lucide-react";
+"use client";
 
-import { Card, CardContent } from "@/components/ui/card";
+import { useRouter } from "next/navigation";
+
 import { Progress } from "@/components/ui/progress";
+import { TableCell, TableRow } from "@/components/ui/table";
 import { BrandBadge } from "@/components/brand-badge";
-import { StatusBadge } from "@/components/status-badge";
-import { formatPower, formatRelativeTime } from "@/lib/format";
+import { StatusDot } from "@/components/status-badge";
+import { formatPower, formatRelativeTime, STATUS_LABEL } from "@/lib/format";
 import type { SiteWithStatus } from "@/lib/types";
 
-export function SiteCard({ site }: { site: SiteWithStatus }) {
+// A dense telemetry row, not a soft summary tile — this is the primary
+// list surface for an operator scanning dozens-to-hundreds of sites, so
+// every row favors information density (mono numerics, thin SOC bar,
+// hairline dividers) over decorative padding.
+export function SiteRow({ site }: { site: SiteWithStatus }) {
+  const router = useRouter();
+
   return (
-    <Link href={`/sites/${site.id}`}>
-      <Card className="gap-2 py-4 transition-colors hover:bg-accent/50">
-        <CardContent className="px-4">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="truncate font-medium">{site.name}</p>
-              <p className="truncate text-xs text-muted-foreground">{site.location}</p>
-            </div>
-            <BrandBadge brand={site.brand} />
+    <TableRow
+      className="cursor-pointer"
+      onClick={() => router.push(`/sites/${site.id}`)}
+      tabIndex={0}
+      onKeyDown={(e) => e.key === "Enter" && router.push(`/sites/${site.id}`)}
+    >
+      <TableCell className="w-8" title={STATUS_LABEL[site.status]}>
+        <StatusDot status={site.status} pulse={site.status === "error" || site.status === "warning"} />
+      </TableCell>
+      <TableCell>
+        <div className="min-w-0">
+          <p className="truncate font-medium">{site.name}</p>
+          <p className="truncate text-xs text-muted-foreground">{site.location}</p>
+        </div>
+      </TableCell>
+      <TableCell>
+        <BrandBadge brand={site.brand} />
+      </TableCell>
+      <TableCell className="text-right font-mono text-sm tabular-nums">{formatPower(site.power_w)}</TableCell>
+      <TableCell className="w-36">
+        {site.soc != null ? (
+          <div className="flex items-center gap-2">
+            <Progress value={site.soc} className="h-1 [&>div]:bg-battery" />
+            <span className="w-8 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground">
+              {Math.round(site.soc)}%
+            </span>
           </div>
-
-          <div className="mt-3 flex items-center justify-between">
-            <StatusBadge status={site.status} />
-            <span className="font-mono text-sm font-semibold tabular-nums">{formatPower(site.power_w)}</span>
-          </div>
-
-          {site.soc != null && (
-            <div className="mt-2 flex items-center gap-2">
-              <BatteryCharging className="size-3.5 shrink-0 text-battery" />
-              <Progress value={site.soc} className="h-1.5" />
-              <span className="w-9 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-                {Math.round(site.soc)}%
-              </span>
-            </div>
-          )}
-
-          <p className="mt-2 text-[10px] text-muted-foreground">
-            {site.capacity_kw.toFixed(1)} kW · last seen {formatRelativeTime(site.last_seen_at)}
-          </p>
-        </CardContent>
-      </Card>
-    </Link>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        )}
+      </TableCell>
+      <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+        {site.capacity_kw.toFixed(1)} kW
+      </TableCell>
+      <TableCell className="text-right text-xs text-muted-foreground">{formatRelativeTime(site.last_seen_at)}</TableCell>
+    </TableRow>
   );
 }
