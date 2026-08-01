@@ -5,7 +5,6 @@ import { CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BrandBadge } from "@/components/brand-badge";
 import { useAcknowledgeAlert, useActiveAlerts } from "@/hooks/use-alerts";
@@ -51,7 +50,12 @@ export function IssuesPanel() {
             <p className="text-xs">All systems normal</p>
           </div>
         ) : (
-          <ScrollArea className="h-[360px]">
+          // A plain scrolling div, not Radix ScrollArea: its Viewport wraps
+          // children in a `display: table` element to measure scroll size,
+          // which puts every row in a shrink-to-fit sizing context instead
+          // of 100% of the panel width — on narrow viewports that pushed
+          // the Ack button past the edge instead of letting the row wrap.
+          <div className="h-[360px] overflow-y-auto">
             <div className="flex flex-col">
               {alerts.map((alert) => (
                 <AlertRow
@@ -69,7 +73,7 @@ export function IssuesPanel() {
                 />
               ))}
             </div>
-          </ScrollArea>
+          </div>
         )}
       </div>
     </div>
@@ -97,13 +101,13 @@ function AlertRow({
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(e) => e.key === "Enter" && onOpen()}
-      className="flex cursor-pointer items-start gap-3 border-b border-border px-4 py-2.5 transition-colors last:border-b-0 hover:bg-accent"
+      className="flex flex-wrap cursor-pointer items-start gap-x-3 gap-y-2 border-b border-border px-4 py-2.5 transition-colors last:border-b-0 hover:bg-accent"
     >
       <span
         className={cn("mt-1.5 size-2 shrink-0 rounded-full", isCritical ? "bg-status-critical" : "bg-status-warning")}
         aria-hidden
       />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-40">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="truncate text-sm font-medium">{alert.site_name ?? "Unknown site"}</span>
           {alert.brand && <BrandBadge brand={alert.brand} />}
@@ -123,7 +127,7 @@ function AlertRow({
         <Button
           size="sm"
           variant="outline"
-          className="h-6 px-2 text-[11px]"
+          className="ml-6 h-6 shrink-0 px-2 text-[11px] sm:ml-0"
           disabled={acknowledging}
           onClick={(e) => {
             e.stopPropagation();

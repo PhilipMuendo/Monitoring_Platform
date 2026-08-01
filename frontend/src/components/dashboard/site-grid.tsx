@@ -72,11 +72,11 @@ export function SiteGrid() {
               <TableRow className="hover:bg-transparent">
                 <TableHead className="label-caps w-8 text-[10px]"></TableHead>
                 <TableHead className="label-caps text-[10px]">Site</TableHead>
-                <TableHead className="label-caps text-[10px]">Brand</TableHead>
+                <TableHead className="label-caps hidden text-[10px] sm:table-cell">Brand</TableHead>
                 <TableHead className="label-caps text-right text-[10px]">Output</TableHead>
-                <TableHead className="label-caps text-[10px]">Battery</TableHead>
-                <TableHead className="label-caps text-right text-[10px]">Capacity</TableHead>
-                <TableHead className="label-caps text-right text-[10px]">Last seen</TableHead>
+                <TableHead className="label-caps hidden text-[10px] md:table-cell">Battery</TableHead>
+                <TableHead className="label-caps hidden text-right text-[10px] lg:table-cell">Capacity</TableHead>
+                <TableHead className="label-caps hidden text-right text-[10px] lg:table-cell">Last seen</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

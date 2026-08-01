@@ -36,7 +36,7 @@ export function SiteAlertsList({ siteId }: { siteId: string }) {
               <TableRow className="hover:bg-transparent">
                 <TableHead className="label-caps text-[10px]">Type</TableHead>
                 <TableHead className="label-caps text-[10px]">Message</TableHead>
-                <TableHead className="label-caps text-[10px]">Raised</TableHead>
+                <TableHead className="label-caps hidden text-[10px] sm:table-cell">Raised</TableHead>
                 <TableHead className="label-caps text-[10px]">Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -48,8 +48,10 @@ export function SiteAlertsList({ siteId }: { siteId: string }) {
                       {TYPE_LABEL[alert.type] ?? alert.type}
                     </Badge>
                   </TableCell>
-                  <TableCell className="max-w-xs truncate text-sm">{alert.message}</TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">{formatRelativeTime(alert.created_at)}</TableCell>
+                  <TableCell className="max-w-40 truncate text-sm sm:max-w-xs">{alert.message}</TableCell>
+                  <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">
+                    {formatRelativeTime(alert.created_at)}
+                  </TableCell>
                   <TableCell className="text-xs">
                     {alert.resolved_at ? (
                       <span className="text-muted-foreground">

@@ -47,10 +47,10 @@ export function SitesAdminTable() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Brand</TableHead>
+              <TableHead className="hidden sm:table-cell">Brand</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Capacity</TableHead>
-              <TableHead>Active</TableHead>
+              <TableHead className="hidden md:table-cell">Capacity</TableHead>
+              <TableHead className="hidden lg:table-cell">Active</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -58,14 +58,14 @@ export function SitesAdminTable() {
             {sites?.map((site) => (
               <TableRow key={site.id} className={site.is_active ? undefined : "opacity-50"}>
                 <TableCell className="font-medium">{site.name}</TableCell>
-                <TableCell>
+                <TableCell className="hidden sm:table-cell">
                   <BrandBadge brand={site.brand} />
                 </TableCell>
                 <TableCell>
                   <StatusBadge status={site.status} />
                 </TableCell>
-                <TableCell>{site.capacity_kw.toFixed(1)} kW</TableCell>
-                <TableCell>{site.is_active ? "Yes" : "No"}</TableCell>
+                <TableCell className="hidden md:table-cell">{site.capacity_kw.toFixed(1)} kW</TableCell>
+                <TableCell className="hidden lg:table-cell">{site.is_active ? "Yes" : "No"}</TableCell>
                 <TableCell className="flex justify-end gap-1 text-right">
                   <EditSiteDialog site={site} />
                   <AlertDialog>

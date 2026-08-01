@@ -28,24 +28,26 @@ export function UsersAdminTable() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Email</TableHead>
+              <TableHead className="hidden sm:table-cell">Email</TableHead>
               <TableHead>Role</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Joined</TableHead>
+              <TableHead className="hidden md:table-cell">Status</TableHead>
+              <TableHead className="hidden lg:table-cell">Joined</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {users?.map((user) => (
               <TableRow key={user.id}>
                 <TableCell className="font-medium">{user.name}</TableCell>
-                <TableCell className="text-muted-foreground">{user.email}</TableCell>
+                <TableCell className="hidden text-muted-foreground sm:table-cell">{user.email}</TableCell>
                 <TableCell>
                   <Badge variant="secondary" className="capitalize">
                     {user.role}
                   </Badge>
                 </TableCell>
-                <TableCell>{user.is_active ? "Active" : "Disabled"}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{formatRelativeTime(user.created_at)}</TableCell>
+                <TableCell className="hidden md:table-cell">{user.is_active ? "Active" : "Disabled"}</TableCell>
+                <TableCell className="hidden text-xs text-muted-foreground lg:table-cell">
+                  {formatRelativeTime(user.created_at)}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

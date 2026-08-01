@@ -56,6 +56,11 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        # Baked into the client bundle at build time (Next.js NEXT_PUBLIC_*
+        # convention) — the runtime env var below only affects the Node
+        # server process, not already-built client JS, so both must agree.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     container_name: solar-monitor-frontend
     restart: unless-stopped
     depends_on:

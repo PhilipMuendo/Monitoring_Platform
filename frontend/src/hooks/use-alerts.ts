@@ -3,13 +3,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api-client";
+import { FLEET_REFETCH_INTERVAL_MS } from "@/lib/constants";
 import type { Alert } from "@/lib/types";
 
 export function useActiveAlerts() {
   return useQuery({
     queryKey: ["alerts", "active"],
     queryFn: () => api.get<Alert[]>("/api/v1/alerts"),
-    refetchInterval: 30_000,
+    // Belt-and-suspenders only: useAlertStream (SSE) invalidates this query
+    // the moment an alert fires, so this poll rarely does real work.
+    refetchInterval: FLEET_REFETCH_INTERVAL_MS,
   });
 }
 

@@ -32,11 +32,11 @@ export function SiteRow({ site }: { site: SiteWithStatus }) {
           <p className="truncate text-xs text-muted-foreground">{site.location}</p>
         </div>
       </TableCell>
-      <TableCell>
+      <TableCell className="hidden sm:table-cell">
         <BrandBadge brand={site.brand} />
       </TableCell>
       <TableCell className="text-right font-mono text-sm tabular-nums">{formatPower(site.power_w)}</TableCell>
-      <TableCell className="w-36">
+      <TableCell className="hidden w-36 md:table-cell">
         {site.soc != null ? (
           <div className="flex items-center gap-2">
             <Progress value={site.soc} className="h-1 [&>div]:bg-battery" />
@@ -48,10 +48,12 @@ export function SiteRow({ site }: { site: SiteWithStatus }) {
           <span className="text-xs text-muted-foreground">—</span>
         )}
       </TableCell>
-      <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+      <TableCell className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground lg:table-cell">
         {site.capacity_kw.toFixed(1)} kW
       </TableCell>
-      <TableCell className="text-right text-xs text-muted-foreground">{formatRelativeTime(site.last_seen_at)}</TableCell>
+      <TableCell className="hidden text-right text-xs text-muted-foreground lg:table-cell">
+        {formatRelativeTime(site.last_seen_at)}
+      </TableCell>
     </TableRow>
   );
 }
