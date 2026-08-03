@@ -23,7 +23,7 @@ export default function AdminPage() {
     <div className="space-y-5">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Administration</h1>
-        <p className="label-caps mt-0.5 text-[11px] text-muted-foreground">Fleet configuration &amp; access control</p>
+        <p className="label-caps mt-0.5 text-tiny text-muted-foreground">Fleet configuration &amp; access control</p>
       </div>
       <Tabs defaultValue="sites">
         <TabsList>

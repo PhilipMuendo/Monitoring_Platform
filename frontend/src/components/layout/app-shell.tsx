@@ -52,7 +52,7 @@ function HeaderClock() {
       <span className="text-foreground">
         {now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
       </span>
-      <span className="label-caps text-[10px]">Local</span>
+      <span className="label-caps text-micro">Local</span>
     </div>
   );
 }
@@ -82,7 +82,7 @@ function SystemStatusIndicator() {
               )}
             />
           </span>
-          <span className="label-caps hidden text-[10px] font-semibold text-muted-foreground sm:inline">{label}</span>
+          <span className="label-caps hidden text-micro font-semibold text-muted-foreground sm:inline">{label}</span>
         </div>
       </TooltipTrigger>
       <TooltipContent side="bottom">
@@ -125,9 +125,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="flex h-12 items-center gap-1 px-3 sm:px-4">
           <Link href="/" className="flex shrink-0 items-center gap-2 pr-3">
             <span className="flex size-6 items-center justify-center rounded-sm bg-solar/15 text-solar">
-              <SunIcon className="size-3.5" strokeWidth={2.25} />
+              <SunIcon className="size-3.5" strokeWidth={1.75} />
             </span>
-            <span className="hidden font-mono text-[13px] font-semibold tracking-tight sm:inline">
+            <span className="hidden font-mono text-brand font-semibold tracking-tight sm:inline">
               SOLAR FLEET <span className="text-muted-foreground">OPS</span>
             </span>
           </Link>
@@ -142,7 +142,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   key={link.href}
                   href={link.href}
                   className={cn(
-                    "label-caps relative flex h-full items-center px-2.5 text-[11px] font-semibold transition-colors",
+                    "label-caps relative flex h-full items-center px-2.5 text-tiny font-semibold transition-colors",
                     active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
                   )}
                 >
@@ -181,7 +181,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <DropdownMenuTrigger asChild>
                 <button className="ml-0.5 flex items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
                   <Avatar className="size-6">
-                    <AvatarFallback className="text-[10px] font-semibold">
+                    <AvatarFallback className="text-micro font-semibold">
                       {user ? initials(user.name || user.email) : "?"}
                     </AvatarFallback>
                   </Avatar>
@@ -191,7 +191,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <DropdownMenuLabel>
                   <div className="truncate text-sm font-medium">{user?.name}</div>
                   <div className="truncate text-xs font-normal text-muted-foreground">{user?.email}</div>
-                  <div className="mt-1 flex items-center gap-1 text-[10px] font-normal text-muted-foreground">
+                  <div className="mt-1 flex items-center gap-1 text-micro font-normal text-muted-foreground">
                     <ShieldCheck className="size-3" />
                     <span className="label-caps">{user?.role}</span>
                   </div>

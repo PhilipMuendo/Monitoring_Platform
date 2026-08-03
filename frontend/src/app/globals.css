@@ -70,6 +70,22 @@
   --color-status-warning: var(--status-warning);
   --color-status-critical: var(--status-critical);
   --color-status-offline: var(--status-offline);
+
+  /* Named type scale — replaces one-off text-[10px]/[11px]/[13px] calls
+     scattered through the app with four intentional sizes, each tied to
+     a specific job (hero number, brand lockup, meta text, micro label). */
+  --text-hero: 1.75rem;
+  --text-hero--line-height: 1.1;
+  --text-hero--letter-spacing: -0.02em;
+  --text-brand: 0.8125rem;
+  --text-brand--letter-spacing: 0.02em;
+  --text-tiny: 0.6875rem;
+  --text-micro: 0.625rem;
+
+  /* One easing curve, used everywhere something moves. "ease-out-expo" —
+     confident and settled, never bouncy — instead of each component
+     picking its own transition timing. */
+  --ease-out-confident: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 :root {
@@ -204,5 +220,40 @@
       linear-gradient(to right, var(--border) 1px, transparent 1px),
       linear-gradient(to bottom, var(--border) 1px, transparent 1px);
     background-size: 28px 28px;
+  }
+
+  /* A directional light sweep rather than a flat opacity pulse — reads as
+     "content is being drawn in", not "something is broken and retrying". */
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+    background: var(--muted);
+  }
+  .skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--foreground) 8%, transparent), transparent);
+    animation: shimmer-sweep 1.8s var(--ease-out-confident) infinite;
+  }
+  @keyframes shimmer-sweep {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  /* One brief flash on a KPI value's accent color when live data changes
+     it — the "this is actually live" cue, without a distracting loop. */
+  @keyframes value-flash {
+    0% {
+      background-color: color-mix(in oklch, currentColor 18%, transparent);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+  .animate-value-flash {
+    animation: value-flash 900ms var(--ease-out-confident);
   }
 }

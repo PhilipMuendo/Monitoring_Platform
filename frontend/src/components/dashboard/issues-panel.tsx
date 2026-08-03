@@ -32,7 +32,7 @@ export function IssuesPanel() {
       <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
         <h2 className="label-caps text-xs font-semibold text-muted-foreground">Active Issues</h2>
         {!!alerts?.length && (
-          <span className="flex h-4.5 min-w-4.5 items-center justify-center rounded-sm bg-status-critical/15 px-1 font-mono text-[10px] font-bold text-status-critical">
+          <span className="flex h-4.5 min-w-4.5 items-center justify-center rounded-sm bg-status-critical/15 px-1 font-mono text-micro font-bold text-status-critical">
             {alerts.length}
           </span>
         )}
@@ -113,7 +113,7 @@ function AlertRow({
           {alert.brand && <BrandBadge brand={alert.brand} />}
           <span
             className={cn(
-              "label-caps text-[9px] font-semibold",
+              "label-caps text-micro font-semibold",
               isCritical ? "text-status-critical" : "text-muted-foreground",
             )}
           >
@@ -121,13 +121,13 @@ function AlertRow({
           </span>
         </div>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">{alert.message}</p>
-        <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">{formatRelativeTime(alert.created_at)}</p>
+        <p className="mt-0.5 font-mono text-micro text-muted-foreground">{formatRelativeTime(alert.created_at)}</p>
       </div>
       {canAcknowledge && (
         <Button
           size="sm"
           variant="outline"
-          className="ml-6 h-6 shrink-0 px-2 text-[11px] sm:ml-0"
+          className="ml-6 h-6 shrink-0 px-2 text-tiny sm:ml-0"
           disabled={acknowledging}
           onClick={(e) => {
             e.stopPropagation();

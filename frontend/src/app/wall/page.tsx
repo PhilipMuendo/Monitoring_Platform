@@ -52,20 +52,20 @@ function WallDisplay() {
       <header className="mb-5 flex items-center justify-between border-b border-border pb-4">
         <div className="flex items-center gap-3">
           <span className="flex size-9 items-center justify-center rounded-sm bg-solar/15 text-solar">
-            <Sun className="size-5" strokeWidth={2.25} />
+            <Sun className="size-5" strokeWidth={1.75} />
           </span>
           <div>
             <h1 className="font-mono text-lg font-semibold tracking-tight">
               SOLAR FLEET <span className="text-muted-foreground">OPS</span>
             </h1>
-            <p className="label-caps text-[11px] text-muted-foreground">Live fleet overview — auto-refreshing</p>
+            <p className="label-caps text-tiny text-muted-foreground">Live fleet overview — auto-refreshing</p>
           </div>
         </div>
         <div className="text-right">
           <div className="font-mono text-3xl leading-none font-semibold tabular-nums">
             {now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
           </div>
-          <div className="label-caps mt-1 text-[11px] text-muted-foreground">
+          <div className="label-caps mt-1 text-tiny text-muted-foreground">
             {now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
           </div>
         </div>
@@ -114,7 +114,7 @@ function WallDisplay() {
                       </div>
                       <span
                         className={cn(
-                          "label-caps text-[10px] font-semibold",
+                          "label-caps text-micro font-semibold",
                           site.status === "error" ? "text-status-critical" : "text-status-warning",
                         )}
                       >

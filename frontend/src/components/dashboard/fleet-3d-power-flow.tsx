@@ -93,7 +93,7 @@ export function Fleet3DPowerFlow({ summary }: { summary: FleetSummary }) {
           {summary.online_sites}
           <span className="text-muted-foreground">/{summary.total_sites}</span>
         </div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">sites online</div>
+        <div className="text-micro uppercase tracking-wide text-muted-foreground">sites online</div>
       </div>
 
       <Canvas

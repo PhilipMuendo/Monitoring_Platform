@@ -35,9 +35,9 @@ export function PowerFlowCallout3D({
 
   const textBlock = (
     <div className="flex flex-col items-center leading-tight">
-      <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
-      <span className={cn("font-mono text-[13px] font-semibold tabular-nums", colorClass)}>{value}</span>
-      {sublabel && <span className="text-[9px] text-muted-foreground">{sublabel}</span>}
+      <span className="label-caps text-micro font-semibold text-muted-foreground">{label}</span>
+      <span className={cn("font-mono text-sm font-semibold tracking-tight tabular-nums", colorClass)}>{value}</span>
+      {sublabel && <span className="text-micro text-muted-foreground">{sublabel}</span>}
     </div>
   );
 

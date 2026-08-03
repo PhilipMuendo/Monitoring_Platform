@@ -99,6 +99,7 @@ export function FleetPowerFlow({ summary }: { summary: FleetSummary }) {
         colorClass="text-solar"
         bgClass="bg-solar/15 border-solar/30"
         active={solarW > THRESHOLD_W}
+        glowVar="var(--color-solar)"
       />
       <PowerFlowNode
         x={POS.grid.x}
@@ -110,6 +111,7 @@ export function FleetPowerFlow({ summary }: { summary: FleetSummary }) {
         colorClass="text-grid"
         bgClass="bg-grid/15 border-grid/30"
         active={Math.abs(gridW) > THRESHOLD_W}
+        glowVar="var(--color-grid)"
       />
       <PowerFlowNode
         x={POS.load.x}
@@ -120,6 +122,7 @@ export function FleetPowerFlow({ summary }: { summary: FleetSummary }) {
         colorClass="text-load"
         bgClass="bg-load/15 border-load/30"
         active={loadW > THRESHOLD_W}
+        glowVar="var(--color-load)"
       />
       <PowerFlowNode
         x={POS.battery.x}
@@ -131,6 +134,7 @@ export function FleetPowerFlow({ summary }: { summary: FleetSummary }) {
         colorClass="text-battery"
         bgClass="bg-battery/15 border-battery/30"
         active={Math.abs(batteryW) > THRESHOLD_W}
+        glowVar="var(--color-battery)"
       />
       <PowerFlowNode
         x={POS.hub.x}

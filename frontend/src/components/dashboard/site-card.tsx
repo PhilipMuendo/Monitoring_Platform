@@ -5,25 +5,35 @@ import { useRouter } from "next/navigation";
 import { Progress } from "@/components/ui/progress";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { BrandBadge } from "@/components/brand-badge";
-import { StatusDot } from "@/components/status-badge";
+import { StatusDot, STATUS_DOT_CLASS } from "@/components/status-badge";
+import { cn } from "@/lib/utils";
 import { formatPower, formatRelativeTime, STATUS_LABEL } from "@/lib/format";
 import type { SiteWithStatus } from "@/lib/types";
 
 // A dense telemetry row, not a soft summary tile — this is the primary
 // list surface for an operator scanning dozens-to-hundreds of sites, so
 // every row favors information density (mono numerics, thin SOC bar,
-// hairline dividers) over decorative padding.
+// hairline dividers) over decorative padding. The hover state reveals a
+// left accent bar in the row's own status color rather than a flat tint —
+// depth through a considered detail instead of an undifferentiated highlight.
 export function SiteRow({ site }: { site: SiteWithStatus }) {
   const router = useRouter();
 
   return (
     <TableRow
-      className="cursor-pointer"
+      className="group/row relative cursor-pointer"
       onClick={() => router.push(`/sites/${site.id}`)}
       tabIndex={0}
       onKeyDown={(e) => e.key === "Enter" && router.push(`/sites/${site.id}`)}
     >
       <TableCell className="w-8" title={STATUS_LABEL[site.status]}>
+        <span
+          className={cn(
+            "absolute inset-y-0 left-0 w-0.5 origin-left scale-y-0 transition-transform duration-150 ease-[var(--ease-out-confident)] group-hover/row:scale-y-100",
+            STATUS_DOT_CLASS[site.status],
+          )}
+          aria-hidden
+        />
         <StatusDot status={site.status} pulse={site.status === "error" || site.status === "warning"} />
       </TableCell>
       <TableCell>

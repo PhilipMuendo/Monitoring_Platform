@@ -53,7 +53,7 @@ export default function SiteDetailPage() {
       <div>
         <Link
           href="/"
-          className="label-caps inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+          className="label-caps inline-flex items-center gap-1.5 text-tiny font-semibold text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" /> Fleet
         </Link>

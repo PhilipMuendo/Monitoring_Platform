@@ -34,10 +34,10 @@ export function SiteAlertsList({ siteId }: { siteId: string }) {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="label-caps text-[10px]">Type</TableHead>
-                <TableHead className="label-caps text-[10px]">Message</TableHead>
-                <TableHead className="label-caps hidden text-[10px] sm:table-cell">Raised</TableHead>
-                <TableHead className="label-caps text-[10px]">Status</TableHead>
+                <TableHead className="label-caps text-micro">Type</TableHead>
+                <TableHead className="label-caps text-micro">Message</TableHead>
+                <TableHead className="label-caps hidden text-micro sm:table-cell">Raised</TableHead>
+                <TableHead className="label-caps text-micro">Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

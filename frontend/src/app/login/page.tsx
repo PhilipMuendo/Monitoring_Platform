@@ -41,23 +41,23 @@ export default function LoginPage() {
       <div className="w-full max-w-[380px]">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
           <span className="flex size-9 items-center justify-center rounded-sm bg-solar/15 text-solar">
-            <Sun className="size-5" strokeWidth={2.25} />
+            <Sun className="size-5" strokeWidth={1.75} />
           </span>
           <div>
             <h1 className="font-mono text-base font-semibold tracking-tight">
               SOLAR FLEET <span className="text-muted-foreground">OPS</span>
             </h1>
-            <p className="label-caps mt-1 text-[11px] text-muted-foreground">Distributed generation monitoring</p>
+            <p className="label-caps mt-1 text-tiny text-muted-foreground">Distributed generation monitoring</p>
           </div>
         </div>
 
         <div className="border border-border bg-card">
           <div className="border-b border-border px-5 py-3">
-            <p className="label-caps text-[11px] font-semibold text-muted-foreground">Operator sign-in</p>
+            <p className="label-caps text-tiny font-semibold text-muted-foreground">Operator sign-in</p>
           </div>
           <form onSubmit={onSubmit} className="space-y-4 px-5 py-5">
             <div className="space-y-1.5">
-              <Label htmlFor="email" className="label-caps text-[11px] text-muted-foreground">
+              <Label htmlFor="email" className="label-caps text-tiny text-muted-foreground">
                 Email
               </Label>
               <Input
@@ -71,7 +71,7 @@ export default function LoginPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="password" className="label-caps text-[11px] text-muted-foreground">
+              <Label htmlFor="password" className="label-caps text-tiny text-muted-foreground">
                 Password
               </Label>
               <Input
@@ -92,7 +92,7 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="label-caps mt-4 text-center text-[10px] text-muted-foreground">Authorized personnel only</p>
+        <p className="label-caps mt-4 text-center text-micro text-muted-foreground">Authorized personnel only</p>
       </div>
     </div>
   );
