@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -31,11 +32,21 @@ const (
 )
 
 const chatSystemPrompt = `You are the assistant embedded in a solar fleet monitoring dashboard. ` +
-	`You answer operators' questions about their fleet — site status, power/energy history, and alerts — ` +
-	`using only the tools provided. Never invent numbers or site names; if a tool call fails or a site isn't ` +
-	`found, say so plainly. Keep answers short and concrete (numbers, site names, timestamps) rather than ` +
-	`generic. If asked to acknowledge an alert, call the acknowledge_alert tool; if that tool isn't available ` +
-	`to you or it reports a permissions error, tell the user they don't have permission to do that here.`
+	`You answer operators' questions about their fleet — site status, power/energy history, alerts, and the ` +
+	`health of the monitoring platform itself — using only the tools provided. Never invent numbers or site ` +
+	`names; if a tool call fails or a site isn't found, say so plainly. Keep answers short and concrete ` +
+	`(numbers, site names, timestamps) rather than generic. ` +
+	`Call tools rather than guessing: to answer about a specific site you usually need list_sites first to ` +
+	`resolve its name to an id, then get_site or get_site_history. Combine tools freely for questions that ` +
+	`need more than one — comparing sites, or ranking them by production, means listing sites and reading the ` +
+	`figures rather than asking the user to narrow it down. ` +
+	`Distinguish a site being down from the platform failing to reach it: sites reported as "unknown" mean we ` +
+	`could not read them, not that they stopped generating. If a whole brand is unknown, call get_system_health ` +
+	`— that is a collection problem on our side, not a fleet outage. ` +
+	`Telemetry fields are nullable and null means "the inverter did not report this", never zero; say "not ` +
+	`reported" rather than reporting a 0. ` +
+	`If asked to acknowledge an alert, call the acknowledge_alert tool; if that tool isn't available to you or ` +
+	`it reports a permissions error, tell the user they don't have permission to do that here.`
 
 type chatMessage struct {
 	Role string `json:"role"` // "user" or "model"
@@ -77,6 +88,16 @@ var chatReadTools = []gemini.FunctionDeclaration{
 		Name:        "list_active_alerts",
 		Description: "List every currently unresolved alert across the fleet, most severe and most recent first.",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+	},
+	{
+		Name: "get_system_health",
+		Description: "Health of the monitoring platform ITSELF, as opposed to the solar sites: " +
+			"whether the last collection cycle succeeded, how long ago it ran, its duration and error count, " +
+			"and a per-brand breakdown of how many sites came back online, offline or unreachable. " +
+			"Use this for questions about whether data is current or why a whole brand's sites show as unknown — " +
+			"a brand with every site unreachable means the platform cannot reach that vendor's API, " +
+			"which is a very different problem from those sites being down.",
+		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
 	},
 }
 
@@ -135,6 +156,17 @@ func (d *Deps) handleChat(w http.ResponseWriter, r *http.Request) {
 	for range chatMaxToolHops {
 		result, err := d.Gemini.Generate(ctx, chatSystemPrompt, contents, tools)
 		if err != nil {
+			// Log the cause. This previously discarded err entirely, so a
+			// misconfigured model produced "the assistant is unavailable right
+			// now" in the widget and NOTHING server-side — the endpoint even
+			// logs status 200, because SSE headers are written before the
+			// first model call. That combination is close to undiagnosable:
+			// it cost a real debugging session when the default model
+			// (gemini-1.5-flash) was retired by Google and every request began
+			// 404ing. The model name is included because it is the field most
+			// likely to be wrong.
+			slog.Error("chat generation failed",
+				"error", err, "model", d.Cfg.GeminiModel, "user_id", u.ID)
 			writeSSE(w, flusher, "error", map[string]string{"error": "the assistant is unavailable right now"})
 			return
 		}
@@ -196,6 +228,37 @@ func (d *Deps) dispatchChatTool(ctx context.Context, u auth.AuthedUser, fc gemin
 		activeAlerts, _ := d.Alerts.CountActive(ctx)
 		summary.ActiveAlerts = activeAlerts
 		return chatToolResult{response: summary}
+
+	case "get_system_health":
+		// Deliberately reports the PLATFORM's health, not the fleet's. "Every
+		// Sosen site is unknown" and "every Sosen site is offline" look alike
+		// in a site list but mean opposite things: the first is our own
+		// collection failing, the second is the sites failing. Handing the
+		// model the per-brand split plus the cycle's error count lets it tell
+		// the two apart instead of guessing from status counts.
+		if d.Collector == nil {
+			return chatToolResult{response: toolError(fmt.Errorf("collector not running"))}
+		}
+		stats := d.Collector.Stats()
+		lastRun := d.Collector.LastRun()
+		health := map[string]any{
+			"last_cycle_started_at":  lastRun,
+			"last_cycle_duration_ms": stats.DurationMS,
+			"sites_polled":           stats.SitesPolled,
+			"errors_last_cycle":      stats.Errors,
+			"poll_interval":          d.Cfg.PollInterval.String(),
+			"brands":                 stats.ByBrand,
+		}
+		if !lastRun.IsZero() {
+			health["seconds_since_last_cycle"] = int(time.Since(lastRun).Seconds())
+		}
+		if dbErr := d.DB.Pool.Ping(ctx); dbErr != nil {
+			health["database_ok"] = false
+			health["database_error"] = dbErr.Error()
+		} else {
+			health["database_ok"] = true
+		}
+		return chatToolResult{response: health}
 
 	case "list_sites":
 		all, _ := args["all"].(bool)
@@ -275,6 +338,18 @@ func toolError(err error) map[string]string {
 // turn to append to the conversation, so the next Generate call sees
 // exactly what the model said and asked for.
 func turnParts(result gemini.Result) []gemini.Part {
+	// Replay the model's parts verbatim. Rebuilding them from Text and
+	// FunctionCalls looked equivalent but dropped every per-part field the
+	// gemini package does not model — including ThoughtSignature, which the
+	// API requires back on functionCall parts and rejects the entire request
+	// without ("Function call is missing a thought_signature"). Rebuilding
+	// therefore broke tool calling outright on models that emit it.
+	if len(result.Parts) > 0 {
+		return result.Parts
+	}
+
+	// Fallback for a turn with no raw parts (only reachable if a future
+	// caller constructs a Result by hand).
 	parts := make([]gemini.Part, 0, len(result.FunctionCalls)+1)
 	if result.Text != "" {
 		parts = append(parts, gemini.Part{Text: result.Text})

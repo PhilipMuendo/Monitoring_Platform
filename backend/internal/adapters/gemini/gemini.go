@@ -46,6 +46,15 @@ type Part struct {
 	Text             string            `json:"text,omitempty"`
 	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
+	// ThoughtSignature is an opaque token Gemini attaches to a functionCall
+	// part. It MUST be echoed back unchanged when that turn is replayed in a
+	// later request, or the API rejects the whole call with HTTP 400
+	// "Function call is missing a thought_signature in functionCall parts".
+	//
+	// We never read it — it is carried, not interpreted. Dropping it is easy
+	// to do by accident, because reconstructing the model's turn from parsed
+	// fields loses anything not modelled here; see Result.Parts.
+	ThoughtSignature string `json:"thoughtSignature,omitempty"`
 }
 
 type FunctionCall struct {
@@ -99,6 +108,12 @@ type Result struct {
 	Text          string
 	FunctionCalls []FunctionCall
 	FinishReason  string
+	// Parts is the model turn's parts exactly as they arrived, for callers
+	// that need to replay this turn in a follow-up request. Replay the raw
+	// parts rather than rebuilding them from Text/FunctionCalls: the rebuilt
+	// version silently drops per-part fields this package does not model, and
+	// at least one of them (ThoughtSignature) is mandatory on the way back.
+	Parts []Part
 }
 
 // Generate runs one generateContent call. system is sent as the system
@@ -134,7 +149,7 @@ func (c *Client) Generate(ctx context.Context, system string, contents []Content
 	}
 
 	cand := resp.Candidates[0]
-	out := Result{FinishReason: cand.FinishReason}
+	out := Result{FinishReason: cand.FinishReason, Parts: cand.Content.Parts}
 	for _, p := range cand.Content.Parts {
 		if p.Text != "" {
 			out.Text += p.Text

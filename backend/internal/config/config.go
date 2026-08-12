@@ -179,7 +179,25 @@ func Load() (*Config, error) {
 		},
 
 		GeminiAPIKey: getEnv("GEMINI_API_KEY", ""),
-		GeminiModel:  getEnv("GEMINI_MODEL", "gemini-1.5-flash"),
+		// An ALIAS, not a pinned model id, and that is deliberate.
+		//
+		// The previous default (gemini-1.5-flash) looked configured, logged
+		// "ai chat enabled" at boot, and 404'd on every message because Google
+		// had retired the 1.5 family. Pinning gemini-2.5-flash instead failed
+		// the same way: "no longer available to new users". Pinned ids expire,
+		// and when they do this feature dies silently for whoever deploys next.
+		//
+		// gemini-flash-latest tracks the current flash model, so a retirement
+		// is survived rather than discovered in production. The trade is that
+		// behaviour can shift under us without a deploy — acceptable here,
+		// because chat is an additive convenience and the failure mode we
+		// actually hit twice is far worse than a model quietly improving.
+		// Pin GEMINI_MODEL explicitly if you need reproducibility, and re-check
+		// it when Google retires a generation.
+		//
+		// List what a key can really call — the models endpoint advertises some
+		// it cannot, so test with an actual generateContent request.
+		GeminiModel: getEnv("GEMINI_MODEL", "gemini-flash-latest"),
 
 		AdminSeedEmail:    getEnv("ADMIN_SEED_EMAIL", "admin@solarfleet.local"),
 		AdminSeedPassword: getEnv("ADMIN_SEED_PASSWORD", "ChangeMe123!"),
