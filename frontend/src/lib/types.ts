@@ -74,7 +74,15 @@ export interface FleetSummary {
   total_power_w: number;
   total_load_w: number;
   total_grid_w: number;
-  total_battery_w: number;
+  /**
+   * Derived from the power balance (solar + grid - load), not measured — no
+   * brand reports battery current. Null when no site reports all three terms,
+   * because a residual computed from partial data is a confident wrong number
+   * rather than an approximate right one. See battery_sites for its coverage.
+   */
+  total_battery_w: number | null;
+  /** How many sites total_battery_w actually covers, out of total_sites. */
+  battery_sites: number;
   avg_soc: number;
   energy_today_kwh: number;
   active_alerts: number;

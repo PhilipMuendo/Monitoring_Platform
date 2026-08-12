@@ -378,6 +378,7 @@ const upsertStatusSQL = `
 func (r *SiteRepo) FleetSummary(ctx context.Context) (models.FleetSummary, error) {
 	var sum models.FleetSummary
 	var latestSeen *time.Time
+	var batteryResidual *float64
 	err := r.db.Pool.QueryRow(ctx, `
 		SELECT
 			COUNT(*) FILTER (WHERE s.is_active),
@@ -399,21 +400,40 @@ func (r *SiteRepo) FleetSummary(ctx context.Context) (models.FleetSummary, error
 			-- Per-site staleness is already surfaced elsewhere: each site
 			-- card shows its own "last seen", and the alert engine raises an
 			-- offline alert per site.
-			MAX(st.last_seen_at) FILTER (WHERE s.is_active)
+			MAX(st.last_seen_at) FILTER (WHERE s.is_active),
+			-- Battery is the residual of the power balance (generation +
+			-- grid import = load + battery charging), because no brand
+			-- reports battery current and there is nothing to measure.
+			--
+			-- Restricted to sites reporting ALL THREE terms. Summing each
+			-- term over whatever sites happened to report it mixes different
+			-- populations: solar came from 20 sites, load from 16, grid from
+			-- 8, and the leftover was labelled battery charging. That is not
+			-- a measurement, it is the missing data added up.
+			COUNT(*) FILTER (
+				WHERE s.is_active AND st.power_w IS NOT NULL
+				  AND st.load_power_w IS NOT NULL AND st.grid_power_w IS NOT NULL
+			),
+			SUM(st.power_w + st.grid_power_w - st.load_power_w) FILTER (
+				WHERE s.is_active AND st.power_w IS NOT NULL
+				  AND st.load_power_w IS NOT NULL AND st.grid_power_w IS NOT NULL
+			)
 		FROM sites s
 		LEFT JOIN site_status st ON st.site_id = s.id
 	`).Scan(
 		&sum.TotalSites, &sum.OnlineSites, &sum.OfflineSites, &sum.WarningSites, &sum.ErrorSites,
 		&sum.TotalPowerW, &sum.TotalLoadW, &sum.TotalGridW, &sum.AvgSOC, &sum.EnergyTodayKWh,
-		&latestSeen,
+		&latestSeen, &sum.BatterySites, &batteryResidual,
 	)
 	if err != nil {
 		return sum, fmt.Errorf("fleet summary: %w", err)
 	}
-	// Power balance: generation + grid import = load + battery charging
-	// (grid negative = exporting, battery negative = discharging), so
-	// battery = power + grid - load.
-	sum.TotalBatteryW = sum.TotalPowerW + sum.TotalGridW - sum.TotalLoadW
+	// Left nil when no site reports a complete balance — absent, not zero. A
+	// zero would render as "battery idle", which is a claim the data does not
+	// support.
+	if sum.BatterySites > 0 && batteryResidual != nil {
+		sum.TotalBatteryW = batteryResidual
+	}
 	if latestSeen != nil {
 		sum.DataAgeSeconds = int(time.Since(*latestSeen).Seconds())
 	}

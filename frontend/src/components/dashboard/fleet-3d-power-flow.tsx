@@ -32,7 +32,8 @@ import { useRenderActive } from "@/hooks/use-render-active";
 import { useWebGLTier } from "@/hooks/use-webgl-support";
 import { formatPercent, formatPower } from "@/lib/format";
 import { POWER_FLOW_COLORS, STUDIO, STUDIO_INK } from "@/lib/power-flow-colors";
-import { POWER_FLOW_THRESHOLD_W, scalePowerFlowSpeed } from "@/lib/power-flow-scale";
+import { batteryLeg, gridLeg, loadLeg, solarLeg } from "@/lib/power-flow-model";
+import { scalePowerFlowSpeed } from "@/lib/power-flow-scale";
 import { cn } from "@/lib/utils";
 import type { FleetSummary } from "@/lib/types";
 
@@ -227,10 +228,18 @@ function StudioEnvironment() {
 }
 
 export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary; className?: string }) {
+  // Same direction/null semantics as the 2D view — see lib/power-flow-model.
+  // Sharing them is what stops the two views disagreeing about which way power
+  // is going for the same summary.
+  const solar = solarLeg(summary.total_power_w);
+  const load = loadLeg(summary.total_load_w);
+  const grid = gridLeg(summary.total_grid_w);
+  const battery = batteryLeg(summary.total_battery_w);
+
   const solarW = summary.total_power_w;
   const loadW = summary.total_load_w;
   const gridW = summary.total_grid_w;
-  const batteryW = summary.total_battery_w;
+  const batteryW = battery.valueW ?? 0;
   const maxWatts = Math.max(solarW, loadW, Math.abs(gridW), Math.abs(batteryW), 1000);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -360,7 +369,7 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
         {/* The living-room television is lit whenever the fleet draws load,
             using the same threshold as the Load flow edge so the screen and
             the animated conduit can never disagree. */}
-        <House loadActive={loadW > POWER_FLOW_THRESHOLD_W} />
+        <House loadActive={load.active} />
         <BatteryPack accentColor={ACCENTS.battery} soc={summary.avg_soc} />
         {/* Parked inside the undercroft rather than on open ground to the
             left. That bay is part of the building footprint, so the car no
@@ -396,36 +405,36 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
             makes the diagram truthful — see the routing block above. */}
         <PowerFlowEdge3D
           points={SOLAR_ROUTE}
-          active={solarW > POWER_FLOW_THRESHOLD_W}
-          reverse={false}
+          active={solar.active}
+          reverse={solar.reverse}
           speed={scalePowerFlowSpeed(solarW, maxWatts)}
           particleCount={2}
           color={ACCENTS.solar}
         />
         <PowerFlowEdge3D
           points={GRID_ROUTE}
-          active={Math.abs(gridW) > POWER_FLOW_THRESHOLD_W}
+          active={grid.active}
           // Authored pylon->inverter, so non-reversed = importing; exporting
           // (gridW < 0) runs the other way.
-          reverse={gridW < 0}
+          reverse={grid.reverse}
           speed={scalePowerFlowSpeed(gridW, maxWatts)}
           particleCount={2}
           color={ACCENTS.grid}
         />
         <PowerFlowEdge3D
           points={BATTERY_ROUTE}
-          active={Math.abs(batteryW) > POWER_FLOW_THRESHOLD_W}
+          active={battery.active}
           // Declared battery->hub, so non-reversed = discharge; charging
           // (batteryW >= 0) is the reversed (hub->battery) case.
-          reverse={batteryW >= 0}
+          reverse={battery.reverse}
           speed={scalePowerFlowSpeed(batteryW, maxWatts)}
           particleCount={2}
           color={ACCENTS.battery}
         />
         <PowerFlowEdge3D
           points={LOAD_ROUTE}
-          active={loadW > POWER_FLOW_THRESHOLD_W}
-          reverse={false}
+          active={load.active}
+          reverse={load.reverse}
           speed={scalePowerFlowSpeed(loadW, maxWatts)}
           particleCount={2}
           color={ACCENTS.load}
@@ -451,7 +460,7 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
           anchor={PYLON_ANCHOR}
           label="Grid"
           value={formatPower(Math.abs(gridW))}
-          sublabel={gridW >= 0 ? "importing" : "exporting"}
+          sublabel={grid.note ?? undefined}
           color={ACCENTS.grid}
         />
         <PowerFlowCallout3D
@@ -465,7 +474,11 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
           anchor={BATTERY_ANCHOR}
           label="Battery"
           value={formatPercent(summary.avg_soc)}
-          sublabel={`${batteryW >= 0 ? "charging" : "discharging"} ${formatPower(Math.abs(batteryW))}`}
+          sublabel={
+            battery.valueW == null
+              ? "flow not reported"
+              : `${battery.note ?? "idle"} ${formatPower(Math.abs(battery.valueW))}`
+          }
           color={ACCENTS.battery}
           offsetX={-70}
         />

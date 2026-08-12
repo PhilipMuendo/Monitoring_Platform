@@ -187,15 +187,31 @@ type User struct {
 
 // FleetSummary powers the dashboard's KPI cards and power-flow visualization.
 type FleetSummary struct {
-	TotalSites     int     `json:"total_sites"`
-	OnlineSites    int     `json:"online_sites"`
-	OfflineSites   int     `json:"offline_sites"`
-	WarningSites   int     `json:"warning_sites"`
-	ErrorSites     int     `json:"error_sites"`
-	TotalPowerW    float64 `json:"total_power_w"`
-	TotalLoadW     float64 `json:"total_load_w"`
-	TotalGridW     float64 `json:"total_grid_w"` // positive = importing, negative = exporting
-	TotalBatteryW  float64 `json:"total_battery_w"`
+	TotalSites   int     `json:"total_sites"`
+	OnlineSites  int     `json:"online_sites"`
+	OfflineSites int     `json:"offline_sites"`
+	WarningSites int     `json:"warning_sites"`
+	ErrorSites   int     `json:"error_sites"`
+	TotalPowerW  float64 `json:"total_power_w"`
+	TotalLoadW   float64 `json:"total_load_w"`
+	TotalGridW   float64 `json:"total_grid_w"` // positive = importing, negative = exporting
+	// TotalBatteryW is DERIVED, not measured: no brand in the fleet reports
+	// battery current, so there is no measured battery power to sum. It is the
+	// residual of the power balance, solar + grid_import - load, and is
+	// therefore only meaningful across sites reporting ALL THREE terms.
+	//
+	// Null when no site does. It used to be a plain float summed over whatever
+	// each term happened to be available for — solar across every site, load
+	// across those reporting load, grid across those reporting grid — so the
+	// "battery" figure was mostly just the load and grid nobody reported. On
+	// the current fleet that fabricated ~25 kW of battery charging out of 12
+	// sites that report no grid at all, and pointed the dashboard's battery
+	// arrow the wrong way. Same null-vs-zero trap as the telemetry fields:
+	// absent is not zero.
+	TotalBatteryW *float64 `json:"total_battery_w"`
+	// BatterySites is how many sites TotalBatteryW actually covers, so the UI
+	// can say "8 of 20" rather than implying it speaks for the whole fleet.
+	BatterySites   int     `json:"battery_sites"`
 	AvgSOC         float64 `json:"avg_soc"`
 	EnergyTodayKWh float64 `json:"energy_today_kwh"`
 	ActiveAlerts   int     `json:"active_alerts"`

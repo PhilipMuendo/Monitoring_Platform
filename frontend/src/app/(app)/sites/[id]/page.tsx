@@ -13,6 +13,7 @@ import { KpiCard } from "@/components/dashboard/kpi-card";
 import { StatusBadge } from "@/components/status-badge";
 import { BatteryHistoryChart } from "@/components/site/battery-history-chart";
 import { PowerHistoryChart } from "@/components/site/power-history-chart";
+import { SitePowerFlow } from "@/components/site/site-power-flow";
 import { SiteAlertsList } from "@/components/site/site-alerts-list";
 import { useSiteHistory } from "@/hooks/use-site-history";
 import { useSite } from "@/hooks/use-sites";
@@ -104,6 +105,18 @@ export default function SiteDetailPage() {
           bgClass="bg-solar/10"
         />
       </div>
+
+      {/* 2D, not the fleet view's 3D scene: that house is a single aggregate
+          illustration of the whole fleet, and a WebGL scene per site would
+          cost far more than it explains. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Power Flow</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <SitePowerFlow site={site} className="h-[320px]" />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

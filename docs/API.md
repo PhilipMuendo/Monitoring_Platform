@@ -55,6 +55,39 @@ wherever that is null rather than being guessed.
 list serialize as `[]` when empty, never `null`, so clients can index and
 check `.length` unconditionally.
 
+### Battery power is derived, and partial
+
+`/fleet/summary`'s `total_battery_w` is **not a measurement**. No brand in the
+fleet reports battery current, so there is nothing to sum. It is the residual
+of the power balance:
+
+```
+battery charging = solar + grid_import - load
+```
+
+which is only meaningful across sites reporting **all three** terms. The
+response therefore carries `battery_sites`, the number of sites the figure
+actually covers, and `total_battery_w` is `null` when that is zero.
+
+Clients must not present it as a fleet-wide figure without checking coverage.
+On the current fleet only 8 of 20 sites report a complete balance: Deye reports
+no `grid_power_w` at all, and two Sosen plants omit it. Summing each term over
+whatever sites happened to report it — solar across 20, load across 16, grid
+across 8 — produced a "battery" number of 25.5 kW where the defensible figure
+is 2.7 kW. The difference was entirely the missing data, and it pointed the
+dashboard's battery arrow the wrong way.
+
+### Flow direction
+
+Two directions are physical facts and never vary: power flows **out of** the
+solar array and **into** the house load. A negative or absent reading on either
+means "not generating" / "not consuming", never a reversed flow.
+
+The other two carry the sign convention above: `grid_power_w` positive is
+importing and negative is exporting; derived battery positive is charging and
+negative is discharging. A discharging battery supplying the house reads as a
+continuous run from battery, through the inverter, out to the load.
+
 ## Alerts
 
 | Method | Path | Auth | Description |
