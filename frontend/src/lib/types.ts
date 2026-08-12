@@ -92,6 +92,13 @@ export interface FleetSummary {
 export interface PowerPoint {
   time: string;
   power_w?: number | null;
+  /**
+   * Highest instantaneous reading in the bucket. Present only on the hourly
+   * ranges (7d/30d) — null on 24h, where each point is a single reading and
+   * therefore already its own peak. On hourly ranges power_w is an AVERAGE,
+   * which understates a solar peak by 39-67% on real data.
+   */
+  peak_power_w?: number | null;
   load_w?: number | null;
   grid_w?: number | null;
   soc?: number | null;

@@ -17,12 +17,14 @@ const STEP_MS: Record<HistoryRange, number> = {
 export interface TimePoint {
   ts: number;
   power_w: number | null;
+  /** Bucket peak; null on 24h where each point is already a single reading. */
+  peak_w: number | null;
   load_w: number | null;
   grid_w: number | null;
   soc: number | null;
 }
 
-const GAP_BREAK: TimePoint = { ts: 0, power_w: null, load_w: null, grid_w: null, soc: null };
+const GAP_BREAK: TimePoint = { ts: 0, power_w: null, peak_w: null, load_w: null, grid_w: null, soc: null };
 
 /**
  * Converts history rows into points for a numeric (time-scaled) axis, and
@@ -64,6 +66,7 @@ export function toTimeSeries(points: PowerPoint[], range: HistoryRange): TimePoi
     out.push({
       ts,
       power_w: p.power_w ?? null,
+      peak_w: p.peak_power_w ?? null,
       load_w: p.load_w ?? null,
       grid_w: p.grid_w ?? null,
       soc: p.soc ?? null,

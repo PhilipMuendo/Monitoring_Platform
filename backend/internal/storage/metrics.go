@@ -44,19 +44,34 @@ const insertMetricSQL = `
 `
 
 type PowerPoint struct {
-	Time      time.Time `json:"time"`
-	PowerW    *float64  `json:"power_w"`
-	LoadW     *float64  `json:"load_w"`
-	GridW     *float64  `json:"grid_w"`
-	SOC       *float64  `json:"soc"`
-	EnergyKWh *float64  `json:"energy_today_kwh"`
+	Time   time.Time `json:"time"`
+	PowerW *float64  `json:"power_w"`
+	// PeakPowerW is the highest instantaneous reading inside this bucket, and
+	// is set ONLY on the hourly ranges. Null on 24h, where each point is
+	// already a single 5-minute reading and so is its own peak.
+	//
+	// It exists because PowerW on an hourly range is an AVERAGE, and an
+	// average understates a solar peak badly: measured on live data, hourly
+	// buckets understated their own peak by 39-67% — a real 47.7 kW peak
+	// displayed as 18.1 kW. Charting only the average meant the same site at
+	// the same moment showed different numbers on the 24h and 7d views, with
+	// nothing saying why. The aggregate had always stored max_power_w; the
+	// query simply never selected it.
+	PeakPowerW *float64 `json:"peak_power_w"`
+	LoadW      *float64 `json:"load_w"`
+	GridW      *float64 `json:"grid_w"`
+	SOC        *float64 `json:"soc"`
+	EnergyKWh  *float64 `json:"energy_today_kwh"`
 }
 
 // History24h returns raw 5-minute readings for the last 24 hours —
 // fine-grained enough to be meaningful at that resolution.
 func (r *MetricsRepo) History24h(ctx context.Context, siteID string) ([]PowerPoint, error) {
 	rows, err := r.db.Pool.Query(ctx, `
-		SELECT time, power_w, load_power_w, grid_power_w, soc, energy_today_kwh
+		-- NULL peak: a raw 5-minute reading is its own peak, so there is no
+		-- separate maximum to report. Selected explicitly rather than omitted
+		-- so both history queries share one scanner and one column order.
+		SELECT time, power_w, NULL::double precision, load_power_w, grid_power_w, soc, energy_today_kwh
 		FROM site_metrics
 		WHERE site_id = $1::uuid AND time > NOW() - INTERVAL '24 hours'
 		ORDER BY time ASC
@@ -73,7 +88,7 @@ func (r *MetricsRepo) History24h(ctx context.Context, siteID string) ([]PowerPoi
 // 5-minute rows for a long window.
 func (r *MetricsRepo) HistoryHourly(ctx context.Context, siteID string, since time.Duration) ([]PowerPoint, error) {
 	rows, err := r.db.Pool.Query(ctx, `
-		SELECT bucket, avg_power_w, avg_load_power_w, avg_grid_power_w, avg_soc, energy_today_kwh
+		SELECT bucket, avg_power_w, max_power_w, avg_load_power_w, avg_grid_power_w, avg_soc, energy_today_kwh
 		FROM site_metrics_hourly
 		WHERE site_id = $1::uuid AND bucket > NOW() - $2::interval
 		ORDER BY bucket ASC
@@ -97,7 +112,7 @@ func scanPowerPoints(rows interface {
 	out := []PowerPoint{}
 	for rows.Next() {
 		var p PowerPoint
-		if err := rows.Scan(&p.Time, &p.PowerW, &p.LoadW, &p.GridW, &p.SOC, &p.EnergyKWh); err != nil {
+		if err := rows.Scan(&p.Time, &p.PowerW, &p.PeakPowerW, &p.LoadW, &p.GridW, &p.SOC, &p.EnergyKWh); err != nil {
 			return nil, fmt.Errorf("scan power point: %w", err)
 		}
 		out = append(out, p)

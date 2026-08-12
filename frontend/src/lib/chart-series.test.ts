@@ -105,3 +105,42 @@ describe("toTimeSeries", () => {
     expect(nulls).toHaveLength(1);
   });
 });
+
+describe("toTimeSeries — hourly peak", () => {
+  // On 7d/30d, power_w is an hourly AVERAGE and understates real solar peaks
+  // by 39-67% on live data. The peak must survive into the series, or the
+  // chart is back to showing a 47.7 kW peak as 18.1 kW.
+  it("carries peak_power_w through as peak_w", () => {
+    const out = toTimeSeries(
+      [
+        { time: "2026-08-10T09:00:00Z", power_w: 18143, peak_power_w: 47710 },
+        { time: "2026-08-10T10:00:00Z", power_w: 27863, peak_power_w: 51380 },
+      ],
+      "7d",
+    );
+    expect(out.map((p) => p.peak_w)).toEqual([47710, 51380]);
+    expect(out.map((p) => p.power_w)).toEqual([18143, 27863]);
+  });
+
+  it("is null on 24h, where a reading is already its own peak", () => {
+    const out = toTimeSeries([{ time: "2026-08-10T09:00:00Z", power_w: 4200 }], "24h");
+    expect(out[0].peak_w).toBeNull();
+    expect(out[0].power_w).toBe(4200);
+  });
+
+  it("nulls peak across a gap break so the peak line breaks too", () => {
+    // A gap must interrupt BOTH lines. If peak connected across an outage
+    // while the average broke, the chart would assert production during hours
+    // it never received.
+    const out = toTimeSeries(
+      [
+        { time: "2026-08-10T09:00:00Z", power_w: 100, peak_power_w: 500 },
+        { time: "2026-08-10T15:00:00Z", power_w: 200, peak_power_w: 600 },
+      ],
+      "7d",
+    );
+    const broken = out.find((p) => p.power_w === null);
+    expect(broken).toBeDefined();
+    expect(broken?.peak_w).toBeNull();
+  });
+});
