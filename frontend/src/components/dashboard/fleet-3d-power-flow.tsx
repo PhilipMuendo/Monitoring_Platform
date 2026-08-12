@@ -14,9 +14,16 @@ import { MODEL_CREDITS } from "@/components/dashboard/scene/model-credits";
 import { GridPylon, PYLON_ANCHOR } from "@/components/dashboard/scene/grid-pylon";
 import {
   CARPORT_POSITION,
+  GRID_DROP_X,
   House,
   HOUSE_HUB_ANCHOR,
   HOUSE_LOAD_ANCHOR,
+  HUB_LEFT_X,
+  HUB_RIGHT_X,
+  HUB_TOP_Y,
+  ROOF_FRONT_Z,
+  ROOF_TOP_Y,
+  SOLAR_DROP_X,
   SOLAR_PANEL_ANCHOR,
 } from "@/components/dashboard/scene/house";
 import { PowerFlowCallout3D } from "@/components/dashboard/scene/power-flow-callout-3d";
@@ -70,86 +77,84 @@ const ZOOM_MAX = 170;
 // wants it light. Only the semantic accent colors come from the tokens.
 const ACCENTS = POWER_FLOW_COLORS.light;
 
-// Bezier control points for the four conduits.
-//
-// These are authored explicitly rather than derived from the midpoint of
-// their endpoints. A midpoint control puts the curve's belly inside the
-// building volume — the grid run from the pylon speared straight through
-// the sectioned bedroom, and the solar run from the roof to the wall-
-// mounted inverter disappeared inside the massing entirely. Pushing every
-// control well forward of the facade (Z ≳ 1.7, against a front wall at
-// Z = 1.025) keeps all four conduits in clear air in front of the house,
-// which is also how the reference render routes them.
 // ---------------------------------------------------------------------------
 // Conduit routing
 //
 // Every service converges on the inverter, because that is what an inverter
-// is: the point where PV, battery, grid and house loads actually meet. The
-// grid leg used to stop at a service head on the right-hand gable and never
-// reach it, which left the diagram claiming the utility feed connects to
-// nothing.
+// is: the point where PV, battery, grid and house loads actually meet.
 //
-// Runs are authored as orthogonal waypoints — vertical drops, horizontal
-// runs, right-angle turns — rather than as smooth curves through open air.
-// See the long note in scene/power-flow-edge-3d.tsx for why.
+// Runs are authored as orthogonal waypoints — vertical drops, horizontal runs,
+// right-angle turns — rather than as smooth curves through open air. See the
+// long note in scene/power-flow-edge-3d.tsx for why.
 //
-// The facade's front face is z = 1.025. Each service is given its own shallow
-// plane a few centimetres proud of it so that where two runs cross they pass
-// cleanly in front of/behind each other instead of intersecting — which is
-// also how a real wall with several services on it looks.
-const Z_SOLAR = 1.13;
+// FOUR SERVICES, FOUR FACES. Each run approaches the inverter from its own
+// side, which is what keeps them legible:
+//
+//   solar   -> TOP    (down from the roof, on the left)
+//   grid    -> RIGHT  (in off the roof run, on the right)
+//   battery -> LEFT   (in from the undercroft cabinet)
+//   load    -> BOTTOM (out and along to the television)
+//
+// Solar and grid previously ran the other way round: the grid crossed the
+// whole roof to drop at x = -1.05, LEFT of the solar drop at x = -0.3, then
+// doubled back rightward into the hub while solar came leftward into the same
+// hub. The two runs crossed twice — once where the roof run passed the solar
+// take-off, once on the approach — which is what read as criss-crossing. Now
+// the grid's roof run stops at GRID_DROP_X and never travels further left,
+// and the solar drop is the only thing left of it. Their X ranges no longer
+// overlap at all, so no camera angle can make them cross.
+//
+// The facade's front face is z = 1.025 and the eaves overhang to
+// ROOF_FRONT_Z. Each service gets its own shallow plane proud of the wall:
+// solar and grid must also clear the eaves, since both drop past them.
+const Z_SOLAR = ROOF_FRONT_Z + 0.035;
+const Z_GRID = ROOF_FRONT_Z + 0.075;
 const Z_BATTERY = 1.09;
-const Z_GRID = 1.17;
 const Z_LOAD = 1.05;
 /** Where a run meets the inverter box (0.22 x 0.32, centred on the hub). */
 const HUB_FACE_Z = 1.1;
+/** Hub centre height — the level the two side entries come in at. */
+const HUB_Y = HOUSE_HUB_ANCHOR[1];
 
-// The roof slab's top surface, which the grid run lies along. The roof group
-// sits at y = WALL_TOP + SLAB_T = 2.61, z = 0.125, pitched 0.16 rad about X,
-// with the slab's top face 0.1 above its own origin — so a point at local
-// depth zl lands at world y = 2.709 - 0.159*zl, z = 0.141 + 0.987*zl. The
-// strip in front of the array (local zl ~ 0.85) therefore sits at roughly
-// y 2.57, z 1.00, and the constants below ride just clear of it.
-const ROOF_RUN_Y = 2.6;
-const ROOF_RUN_Z = 0.98;
+// The strip of flat roof deck in front of the array that the grid run lies
+// along. Now that the roof is flat these are two plain numbers rather than a
+// point projected through a pitch rotation.
+const ROOF_RUN_Y = ROOF_TOP_Y + 0.03;
+const ROOF_RUN_Z = 0.92;
 
-// Off the array, forward over the roof edge, then straight down the facade
-// and across into the top of the inverter.
+// Off the panels, forward over the eaves, straight down into the top of the
+// inverter. Three waypoints and a single bend — the solar leg is now the
+// simplest run in the scene, and the whole of it sits left of the grid.
 const SOLAR_ROUTE = [
   SOLAR_PANEL_ANCHOR,
-  [-0.3, 2.66, 1.12],
-  [-0.3, 2.42, Z_SOLAR],
-  [-0.3, 1.12, Z_SOLAR],
-  [-0.72, 1.12, Z_SOLAR],
-  [-0.72, 1.02, HUB_FACE_Z],
+  [SOLAR_DROP_X, SOLAR_PANEL_ANCHOR[1], Z_SOLAR],
+  [SOLAR_DROP_X, HUB_TOP_Y - 0.03, Z_SOLAR],
 ] as const;
 
-// Out of the cabinet under the undercroft, along the wall, into the side of
-// the inverter. Dropped to y = 1.05 for the horizontal leg so it does not sit
-// at the same height as the solar run and read as one broken line.
+// Out of the cabinet under the undercroft, forward clear of it, down to hub
+// height and straight in to the inverter's left face. Entirely within
+// x < -1.4, so it never approaches the glazing the old run crossed.
 const BATTERY_ROUTE = [
   BATTERY_ANCHOR,
-  [-1.92, 1.05, Z_BATTERY],
-  [-0.95, 1.05, Z_BATTERY],
-  [-0.95, 0.92, Z_BATTERY],
-  [-0.72, 0.92, HUB_FACE_Z],
+  [BATTERY_ANCHOR[0], BATTERY_ANCHOR[1], Z_BATTERY],
+  [BATTERY_ANCHOR[0], HUB_Y, Z_BATTERY],
+  [HUB_LEFT_X, HUB_Y, HUB_FACE_Z],
 ] as const;
 
 // Overhead service drop from the pylon, landing on the ROOF and running along
-// it, then over the front edge and down the wall into the inverter.
+// it, then over the eaves and down the wall into the inverter's right face.
 //
-// Lying on the roof is the point. Carried at y = 2.45 on the facade plane it
-// was a long line suspended in front of the building, crossing the whole
-// composition with nothing behind it — which is what made it read as one huge
-// stroke rather than as part of the house. Sosen runs theirs along the flat
-// roof, where it is visually attached to a surface and stops competing with
-// the building. ROOF_RUN_Y/Z put it on the strip of deck in front of the
-// array, and the pylon has been pulled in from x=2.9 to shorten the free span.
+// Lying on the roof is the point. Carried on the facade plane it was a long
+// line suspended in front of the building, crossing the whole composition with
+// nothing behind it. On the roof it is visually attached to a surface and
+// stops competing with the building.
 //
-// The first leg is the only one in the scene that moves on all three axes,
-// and that is correct rather than sloppy: it is a free span between a pole
-// and a building, which is exactly what an overhead service drop is. Every
-// leg after it, once the cable is fixed to the structure, is orthogonal.
+// The first leg is the only one in the scene that moves on all three axes, and
+// that is correct rather than sloppy: it is a free span between a tower and a
+// building, which is exactly what an overhead service drop is. Every leg after
+// it, once the cable is fixed to the structure, is orthogonal — and the tower
+// is now tall enough (see grid-pylon.tsx) that the span descends the whole
+// way instead of climbing up to the roof it feeds.
 //
 // The head sits at x = 1.72, a whisker proud of the right wall at 1.7. It was
 // briefly at 2.1 — beyond the building entirely — which put the corner where
@@ -157,11 +162,10 @@ const BATTERY_ROUTE = [
 const GRID_ROUTE = [
   PYLON_ANCHOR,
   [1.72, ROOF_RUN_Y, ROOF_RUN_Z],
-  [-1.05, ROOF_RUN_Y, ROOF_RUN_Z],
-  [-1.05, 2.42, Z_GRID],
-  [-1.05, 1.22, Z_GRID],
-  [-0.8, 1.22, Z_GRID],
-  [-0.8, 1.02, HUB_FACE_Z],
+  [GRID_DROP_X, ROOF_RUN_Y, ROOF_RUN_Z],
+  [GRID_DROP_X, ROOF_RUN_Y, Z_GRID],
+  [GRID_DROP_X, HUB_Y, Z_GRID],
+  [HUB_RIGHT_X, HUB_Y, HUB_FACE_Z],
 ] as const;
 
 // Out of the bottom of the inverter, down to skirting level, along the facade
@@ -170,7 +174,7 @@ const GRID_ROUTE = [
 // partition to the television.
 const LOAD_ROUTE = [
   HOUSE_HUB_ANCHOR,
-  [-0.72, 0.25, Z_LOAD],
+  [HOUSE_HUB_ANCHOR[0], 0.25, Z_LOAD],
   [HOUSE_LOAD_ANCHOR[0], 0.25, Z_LOAD],
   [HOUSE_LOAD_ANCHOR[0], 0.25, HOUSE_LOAD_ANCHOR[2]],
   HOUSE_LOAD_ANCHOR,
@@ -432,10 +436,17 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
             screen baseline regardless of camera framing — no per-callout
             pixel tuning here. */}
         {/* offsetX values de-collide the four labels on the shared baseline.
-            Solar and Load anchor within ~0.6 world units of each other in
-            screen X, and the battery's "charging 33.1 kW" sublabel is the
-            widest block of the four, so left to themselves they overlap. */}
-        <PowerFlowCallout3D anchor={SOLAR_PANEL_ANCHOR} label="Solar" value={formatPower(solarW)} color={ACCENTS.solar} offsetX={-34} />
+            The battery's "charging 33.1 kW" sublabel is the widest block of
+            the four, so left to themselves they overlap.
+
+            Solar and Battery need much more separation than they used to:
+            moving the inverter into the left service bay took the solar
+            anchor from x = -0.3 to x = -1.36, so it now sits only ~0.56 world
+            units from the battery at -1.92 instead of ~1.6. They are pushed
+            apart rather than nudged. These are screen-space pixels against a
+            zoom that varies with panel size, so they are the one thing here
+            most likely to want a nudge once it is seen at real wall scale. */}
+        <PowerFlowCallout3D anchor={SOLAR_PANEL_ANCHOR} label="Solar" value={formatPower(solarW)} color={ACCENTS.solar} offsetX={30} />
         <PowerFlowCallout3D
           anchor={PYLON_ANCHOR}
           label="Grid"
@@ -456,7 +467,7 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
           value={formatPercent(summary.avg_soc)}
           sublabel={`${batteryW >= 0 ? "charging" : "discharging"} ${formatPower(Math.abs(batteryW))}`}
           color={ACCENTS.battery}
-          offsetX={-30}
+          offsetX={-70}
         />
 
         {/* Withdraws the AO pass if this device cannot sustain a reasonable

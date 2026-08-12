@@ -12,9 +12,19 @@ import { STUDIO } from "@/lib/power-flow-colors";
 // composition; shortening it also tightens the scene's overall width, which
 // buys camera zoom for everything else.
 export const PYLON_POSITION: [number, number, number] = [2.7, 0, -1.25];
-export const PYLON_ANCHOR: [number, number, number] = [PYLON_POSITION[0], 2.05, PYLON_POSITION[2]];
 
-const HEIGHT = 2.3;
+// Raised from 2.3. The service drop attaches at the crossarm, and at the old
+// height that attachment sat 0.6 BELOW the roof it feeds — so the span
+// climbed from the tower up to the building, which is not how an overhead
+// service behaves and was a large part of why the grid leg read as
+// disconnected from the rest of the run. A transmission tower is taller than
+// the house it serves; now it is, and the cable descends the whole way.
+//
+// The scene got no taller as a result: flattening the roof took the top of
+// the building down from ~2.94 to ~2.73, so this reuses headroom that already
+// existed rather than forcing the camera to zoom out. Keep those two facts
+// together if either changes.
+const HEIGHT = 3.0;
 const BASE_HALF = 0.34; // half-width of the footprint
 const TOP_HALF = 0.1; // half-width where the mast meets the crossarms
 const BAYS = 5; // X-braced segments up the mast
@@ -23,6 +33,12 @@ const CROSSARMS = [
   { y: HEIGHT - 0.12, span: 1.0 },
   { y: HEIGHT - 0.5, span: 0.78 },
 ];
+
+// Where the service drop actually leaves the tower: just under the top
+// crossarm, at the insulators, rather than an arbitrary point up the mast.
+// Derived from CROSSARMS so raising or lowering the tower can never leave the
+// cable attached to thin air.
+export const PYLON_ANCHOR: [number, number, number] = [PYLON_POSITION[0], CROSSARMS[0].y - 0.06, PYLON_POSITION[2]];
 
 // A lattice transmission tower.
 //

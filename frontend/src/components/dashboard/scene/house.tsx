@@ -94,13 +94,76 @@ const ROOM_Z = 0.05;
  */
 const TV_LOCAL: [number, number, number] = [-0.46, 0.62, 0.28];
 
+// Roof. FLAT, bearing directly on the wall head.
+//
+// It used to be a slab pitched 0.16 rad about its own centre, which is what
+// made it look like it was sliding off the building. Rotating a slab about
+// its centre lifts one edge and drops the other: the back edge ended up 0.23
+// clear of the wall it is supposed to sit on, and the front edge drove 0.11
+// BELOW the wall head, cutting into the parapet. So the roof simultaneously
+// floated at the back and sank at the front — read as bending.
+//
+// A pitched plane on a flat wall head always leaves that wedge unless the
+// walls are gabled to match, and nothing here gables them. Flat is also what
+// the undercroft's own cap already was (the two never agreed), what the
+// reference render shows, and what gives the grid conduit a real surface to
+// lie along rather than a slope.
+const ROOF_T = 0.1;
+const ROOF_Z = 0.04;
+// Depth chosen so the back edge lands flush with the cutaway's back wall
+// (z = -1.025) and the front carries a modest 0.08 eaves overhang.
+const ROOF_D = 2.13;
+/** Top face of the roof slab — the surface the grid conduit runs along. */
+export const ROOF_TOP_Y = WALL_TOP + ROOF_T;
+/** Front edge of the eaves. A conduit dropping to the facade must clear this in Z. */
+export const ROOF_FRONT_Z = ROOF_Z + ROOF_D / 2;
+/** Local Z of the array inside the roof group, leaving a clear deck strip at the front. */
+const ARRAY_Z = -0.06;
+/** Top surface of the panels. */
+const ARRAY_TOP_Y = ROOF_TOP_Y + 0.08;
+
+// Front glazing, right-aligned at the partition line.
+//
+// Both windows stop short of the left corner, which is the point: it leaves a
+// blank bay of solid wall for the service cluster — inverter, meter and the
+// two conduit drops. Previously the ground-floor window ran to x = -1.15 and
+// the inverter was mounted at x = -0.72, i.e. ON the glass, which forced every
+// conduit reaching it to cross glazing. Real services go on blank wall beside
+// the incoming supply, and routing them cleanly needs somewhere to route them.
+const WIN_RIGHT = 0.35;
+const GROUND_WIN_W = 1.25;
+const UPPER_WIN_W = 1.35;
+const GROUND_WIN_X = WIN_RIGHT - GROUND_WIN_W / 2;
+const UPPER_WIN_X = WIN_RIGHT - UPPER_WIN_W / 2;
+/** Everything left of the leftmost glazing edge is solid wall. */
+const SERVICE_BAY_RIGHT = Math.min(GROUND_WIN_X - GROUND_WIN_W / 2, UPPER_WIN_X - UPPER_WIN_W / 2);
+
 // World-space anchors other scene pieces (flows / callouts) hook into.
 //
-// The hub is the wall-mounted inverter on the closed wing's facade — the
-// same place the reference render puts it, on the outside wall beside the
-// meter. Keeping it on a solid wall means the four flow conduits converge
-// somewhere physical instead of floating inside a sectioned room.
-export const HOUSE_HUB_ANCHOR: [number, number, number] = [GLAZED_CENTRE - 0.07, 0.92, GROUND_HALF_D + 0.07];
+// The hub is the wall-mounted inverter, now in the blank service bay at the
+// left of the closed wing rather than in the middle of the glazing. Keeping
+// it on solid wall means the four conduits converge somewhere physical, and
+// — the reason it moved — means they can each reach it without crossing a
+// window or each other. See the routing block in fleet-3d-power-flow.tsx.
+const HUB_X = -1.3;
+const HUB_HALF_W = 0.11;
+const HUB_HALF_H = 0.16;
+export const HOUSE_HUB_ANCHOR: [number, number, number] = [HUB_X, 0.92, GROUND_HALF_D + 0.07];
+/** Faces of the inverter box. Conduits terminate on these, not on its centre. */
+export const HUB_LEFT_X = HUB_X - HUB_HALF_W;
+export const HUB_RIGHT_X = HUB_X + HUB_HALF_W;
+export const HUB_TOP_Y = HOUSE_HUB_ANCHOR[1] + HUB_HALF_H;
+/**
+ * X of the solar drop — straight down onto the inverter's top face, and the
+ * leftmost of the two facade drops.
+ */
+export const SOLAR_DROP_X = HUB_X - 0.06;
+/**
+ * X of the grid drop — right of the inverter, and still clear of the glazing
+ * edge at SERVICE_BAY_RIGHT. This is what puts solar on the left and grid on
+ * the right with nothing crossing in between.
+ */
+export const GRID_DROP_X = SERVICE_BAY_RIGHT - 0.08;
 // Load anchors on the living-room television, which lights up when the
 // fleet is drawing load and goes dark when it isn't. Pointing the Load
 // callout at something that visibly changes state beats pointing it at
@@ -118,14 +181,11 @@ export const HOUSE_LOAD_ANCHOR: [number, number, number] = [
   SLAB_T + TV_LOCAL[1] * ROOM_SCALE,
   ROOM_Z + TV_LOCAL[2] * ROOM_SCALE,
 ];
-// On the array, but toward its FRONT-LEFT corner rather than dead centre.
-// At the centre (z = -0.1) the anchor sat behind the facade plane, so the run
-// down to the inverter had to be thrown a long way forward to get around the
-// upper storey — which is what made that conduit balloon out toward the
-// camera and read as a translucent smear rather than a cable. From the roof
-// edge it simply drops down the face of the building, which is how both
-// reference renders route it.
-export const SOLAR_PANEL_ANCHOR: [number, number, number] = [-0.3, WALL_TOP + 0.15, 0.9];
+// On the array, at its LEFT end and directly above the inverter, so the run
+// off the panels is a single forward step over the eaves and then one straight
+// vertical drop — no jog across the facade to find the hub. Sitting 0.04 proud
+// of the panel tops keeps the conduit clear of the modules it leaves.
+export const SOLAR_PANEL_ANCHOR: [number, number, number] = [SOLAR_DROP_X, ARRAY_TOP_Y + 0.04, 0.3];
 // HOUSE_GRID_SERVICE_ANCHOR (a stub on the right-hand gable) has been removed.
 // The grid leg used to stop there rather than reach the inverter, on the
 // grounds that a full cross-facade run collided with the load conduit. That
@@ -334,12 +394,16 @@ function CutawayShell() {
         </group>
       ))}
 
-      {/* ceiling slab closing the top of the upper room */}
+      {/* Ceiling slab closing the top of the upper room. Tucked just BELOW
+          WALL_TOP rather than sitting on it, so the flat roof can bear on a
+          single clean plane across the whole building. Above it, the slab's
+          underside and the roof's underside were coplanar over the cut wing
+          and z-fought. */}
       <RoundedBox
         args={[CUT_W, SLAB_T, GROUND_D]}
         radius={0.01}
         smoothness={2}
-        position={[CUT_CENTRE, WALL_TOP + SLAB_T / 2, 0]}
+        position={[CUT_CENTRE, WALL_TOP - SLAB_T / 2, 0]}
         castShadow
         receiveShadow
       >
@@ -510,7 +574,7 @@ export function House({ loadActive = false }: { loadActive?: boolean }) {
           things that make ours read as a model of a house rather than a
           house. RecessedWindow adds a mullion per 0.5 of width, so widening
           gains divisions rather than one oversized pane. */}
-      <RecessedWindow position={[GLAZED_CENTRE + 0.25, 0.74, GROUND_HALF_D]} width={1.5} height={0.86} lit={loadActive} />
+      <RecessedWindow position={[GROUND_WIN_X, 0.74, GROUND_HALF_D]} width={GROUND_WIN_W} height={0.86} lit={loadActive} />
       {/* Upper-storey glazing.
           Z was GROUND_HALF_D - (GROUND_D - UPPER_D) = 0.775, which is not a
           wall at all: the upper volume is centred at z = 0.125 with a half
@@ -520,8 +584,8 @@ export function House({ loadActive = false }: { loadActive?: boolean }) {
           The upper front face is flush with the ground floor's, so both
           windows share GROUND_HALF_D. */}
       <RecessedWindow
-        position={[GLAZED_CENTRE, GROUND_H + UPPER_H * 0.5, GROUND_HALF_D]}
-        width={1.6}
+        position={[UPPER_WIN_X, GROUND_H + UPPER_H * 0.5, GROUND_HALF_D]}
+        width={UPPER_WIN_W}
         height={0.62}
         lit={loadActive}
       />
@@ -535,12 +599,14 @@ export function House({ loadActive = false }: { loadActive?: boolean }) {
       />
       <RecessedWindow position={[-HALF_W, 0.76, -0.3]} width={1.0} height={0.78} face="left" lit={loadActive} />
 
-      {/* Mono-pitch roof carrying the solar array, spanning both wings */}
-      <group position={[0, WALL_TOP + SLAB_T, (GROUND_D - UPPER_D) / 2]} rotation={[0.16, 0, 0]}>
-        <RoundedBox args={[W + 0.26, 0.1, UPPER_D + 0.3]} radius={0.03} smoothness={3} position={[0, 0.05, 0]} castShadow receiveShadow>
+      {/* Flat roof carrying the solar array, spanning both wings. Seats on
+          WALL_TOP with no rotation — see the ROOF_T block above for why the
+          pitch had to go. */}
+      <group position={[0, WALL_TOP, ROOF_Z]}>
+        <RoundedBox args={[W + 0.26, ROOF_T, ROOF_D]} radius={0.03} smoothness={3} position={[0, ROOF_T / 2, 0]} castShadow receiveShadow>
           <meshStandardMaterial color={STUDIO.roof} roughness={0.75} metalness={0.02} />
         </RoundedBox>
-        <group position={[0, 0.12, 0.02]}>
+        <group position={[0, ROOF_T + 0.02, ARRAY_Z]}>
           <SolarArray />
         </group>
       </group>
