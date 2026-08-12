@@ -79,6 +79,22 @@ PORT=8081
 NEXT_PUBLIC_API_URL=http://localhost:8081
 ```
 
+**If a page 500s with `Jest worker encountered N child process exceptions`**,
+the Turbopack dev cache is corrupt — delete `frontend/.next` and restart
+`npm run dev`:
+
+```bash
+rm -rf frontend/.next
+```
+
+This surfaced as every `/sites/{id}` page returning 500 while the dashboard,
+wall display and login all rendered fine. It looks like a bug in the site
+detail route, but it isn't tied to that code: the failure follows the
+**dynamic route segment**, and a one-line `[id]` page with no imports
+reproduces it just as reliably. `next build` succeeds throughout, which is
+the tell that it is a dev-server cache problem rather than anything in the
+application.
+
 ## Repository layout
 
 ```
