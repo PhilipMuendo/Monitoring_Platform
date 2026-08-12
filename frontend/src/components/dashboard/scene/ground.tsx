@@ -1,69 +1,22 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
 import { STUDIO } from "@/lib/power-flow-colors";
 
 // An invisible floor that only shows the shadow the scene casts onto it
 // (THREE.ShadowMaterial), so the house is grounded without a visible slab.
+//
+// Deliberately faint. This carries the *direction* of the key light; the
+// actual sense of objects resting on the floor comes from the drei
+// <ContactShadows> pass in fleet-3d-power-flow.tsx, which derives each
+// object's real silhouette instead of smearing one soft ellipse under it.
 export function ShadowFloor({ opacity = 0.16 }: { opacity?: number }) {
   return (
     <mesh position={[0, 0.001, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
       <shadowMaterial transparent opacity={opacity} />
-    </mesh>
-  );
-}
-
-/**
- * A soft radial contact shadow painted straight onto the floor under a
- * given footprint.
- *
- * The directional light's cast shadow alone was long, hard-edged and dark
- * — the carport threw a grey trapezoid across the lower-right quadrant that
- * competed with the building for attention. Real architectural renders sell
- * the grounding with a tight, soft blob directly beneath the mass and keep
- * the cast shadow faint. This is that blob: a canvas-generated radial
- * gradient, which costs one texture and no extra shadow-map passes.
- */
-export function ContactShadow({
-  position,
-  width,
-  depth,
-  opacity = 0.3,
-}: {
-  position: [number, number, number];
-  width: number;
-  depth: number;
-  opacity?: number;
-}) {
-  const texture = useMemo(() => {
-    const size = 128;
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-
-    const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-    gradient.addColorStop(0, "rgba(0,0,0,0.85)");
-    gradient.addColorStop(0.45, "rgba(0,0,0,0.42)");
-    gradient.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, size, size);
-
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    return tex;
-  }, []);
-
-  if (!texture) return null;
-
-  return (
-    <mesh position={position} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[width, depth]} />
-      <meshBasicMaterial map={texture} transparent opacity={opacity} depthWrite={false} toneMapped={false} />
     </mesh>
   );
 }
@@ -95,6 +48,10 @@ export function GradientBackdrop() {
     tex.needsUpdate = true;
     return tex;
   }, []);
+
+  // Built here rather than by r3f, so r3f will not free it — and the whole
+  // Canvas unmounts on every 2D/3D toggle.
+  useEffect(() => () => texture?.dispose(), [texture]);
 
   if (!texture) return null;
 

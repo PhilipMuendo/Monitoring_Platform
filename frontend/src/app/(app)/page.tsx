@@ -36,8 +36,13 @@ export default function DashboardPage() {
         <KpiRow summary={summary} />
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+      {/* 4-col grid, flow card taking 3, rather than 3-col taking 2: the
+          company's feedback was that the 3D view reads too small. Widening
+          the card's share (66% -> 75%) alongside the taller POWER_FLOW_BOX
+          roughly doubles the scene's on-screen area without pushing the
+          issues panel below the fold, which would demote live alerts. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <Card className="lg:col-span-3">
           <CardHeader>
             <CardTitle>Fleet Power Flow</CardTitle>
             <CardAction>

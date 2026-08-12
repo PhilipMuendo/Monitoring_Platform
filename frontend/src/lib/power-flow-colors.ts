@@ -72,14 +72,28 @@ export const STUDIO = {
   wall: "#f6f7f9",
   wallAlt: "#e8eaef",
   wallSide: "#eceef2",
-  roof: "#e2e6ec",
+  // Darkened from #e2e6ec. The backdrop gradient's top stop is #dfe5ee — three
+  // RGB steps away — so any roof plane seen against the upper backdrop simply
+  // disappeared into it. That is fine for the main roof, which carries a dark
+  // solar array to separate it, and was very obviously wrong for the bare
+  // undercroft cap at the left end, which had nothing on it and vanished.
+  // A roof is the one surface lit only by sky rather than sun, so reading
+  // darker than the walls is also what it should do physically.
+  roof: "#ccd4de",
   trim: "#c4cad4",
   // Window frames. Lightened from #2f3742: near-black mullions on a white
   // facade turned every opening into a black-outlined rectangle that read
   // as a doorway punched through the wall. The reference uses thin, pale
   // frames that let the glazing itself carry the detail.
-  frame: "#8d949e",
-  glassTint: "#9fb4c4", // tinted architectural glass
+  //
+  // Lightened again from #8d949e, which sat only eight RGB steps from the
+  // conduit colour — so at panel scale the mullions and the cable runs were
+  // the same mid-grey line and the eye could not tell an electrical service
+  // from a window division. Sosen's frames are near-white and their cables
+  // are distinctly dark; the two never compete. Frames and conduit are now
+  // separated deliberately: see STUDIO_INK.conduit.
+  frame: "#bcc3cc",
+  glassTint: "#a8bcca", // tinted architectural glass
   panel: "#0c1626", // dark glossy solar
   panelFrame: "#8b95a5",
   carBody: "#eef0f3",
@@ -124,4 +138,10 @@ export const STUDIO_INK = {
   strong: "#222933",
   muted: "#535c66",
   line: "#80878f",
+  // Electrical conduit. Deliberately darker than STUDIO.frame so a cable run
+  // never reads as a window mullion — they were previously near-identical
+  // greys and the two were genuinely hard to tell apart on the facade.
+  // Kept off pure black: these are surface-mounted trunking against white
+  // render, not ink lines on a drawing.
+  conduit: "#5d656f",
 } as const;

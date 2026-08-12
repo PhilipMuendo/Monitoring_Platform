@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
 import { STUDIO } from "@/lib/power-flow-colors";
@@ -103,6 +103,17 @@ export function Car({
   // choice) left the glass completely enclosed by the bodywork and the car
   // rendered as a featureless white blob with wheels.
   const glassGeometry = useMemo(() => extrudeProfile(GLASS_PROFILE, width - bevel * 2 + 0.014, 0.012), [width, bevel]);
+
+  // Both geometries are built here and passed via the `geometry` prop, which
+  // puts them outside r3f's automatic disposal. Freed explicitly so flipping
+  // the 2D/3D toggle doesn't leak a pair of extruded meshes each time.
+  useEffect(
+    () => () => {
+      bodyGeometry.dispose();
+      glassGeometry.dispose();
+    },
+    [bodyGeometry, glassGeometry],
+  );
 
   const wheelRadius = 0.108;
   const wheelZ = width / 2 - 0.03;

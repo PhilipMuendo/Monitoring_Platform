@@ -75,7 +75,7 @@ function CoffeeTable({ position }: { position: [number, number, number] }) {
   );
 }
 
-function FloorLamp({ position }: { position: [number, number, number] }) {
+function FloorLamp({ position, on = true }: { position: [number, number, number]; on?: boolean }) {
   return (
     <group position={position}>
       <mesh position={[0, 0.01, 0]}>
@@ -88,18 +88,19 @@ function FloorLamp({ position }: { position: [number, number, number] }) {
       </mesh>
       {/* Shade emits a little light of its own. Nothing in the studio rig
           reaches inside a sectioned room, so without this the back of the
-          living room falls into flat shadow. */}
+          living room falls into flat shadow. Goes dark with the rest of the
+          house when the fleet is drawing no load. */}
       <mesh position={[0, 0.56, 0]}>
         <cylinderGeometry args={[0.07, 0.09, 0.13, 14, 1, true]} />
         <meshStandardMaterial
           color={STUDIO.lampShade}
           roughness={0.85}
           emissive={STUDIO.lampShade}
-          emissiveIntensity={0.45}
+          emissiveIntensity={on ? 0.45 : 0}
           side={2}
         />
       </mesh>
-      <pointLight position={[0, 0.52, 0]} intensity={0.35} distance={1.4} decay={2} color="#ffeeda" />
+      {on && <pointLight position={[0, 0.52, 0]} intensity={0.35} distance={1.4} decay={2} color="#ffeeda" />}
     </group>
   );
 }
@@ -202,7 +203,7 @@ function Bed({ position }: { position: [number, number, number] }) {
   );
 }
 
-function Nightstand({ position }: { position: [number, number, number] }) {
+function Nightstand({ position, on = true }: { position: [number, number, number]; on?: boolean }) {
   return (
     <group position={position}>
       <RoundedBox args={[0.16, 0.2, 0.16]} radius={0.02} smoothness={3} position={[0, 0.1, 0]} castShadow>
@@ -214,7 +215,7 @@ function Nightstand({ position }: { position: [number, number, number] }) {
           color={STUDIO.lampShade}
           roughness={0.85}
           emissive={STUDIO.lampShade}
-          emissiveIntensity={0.5}
+          emissiveIntensity={on ? 0.5 : 0}
         />
       </mesh>
     </group>
@@ -224,29 +225,52 @@ function Nightstand({ position }: { position: [number, number, number] }) {
 /**
  * Ground-floor living room, origin at the room's floor centre.
  *
- * `loadActive` drives the television — see Television above. It is the one
- * piece of the interior wired to live data.
+ * `loadActive` drives every light in the room — the television, the floor
+ * lamp, and (in the bedroom) the bedside lamp. Below the load threshold the
+ * house goes dark, which states "nothing is drawing power" faster than the
+ * Load callout does. The studio fill lights in CutawayShell deliberately stay
+ * on regardless: they stand in for the ambient the key light cannot reach
+ * into a sectioned room, and killing them would turn the cutaway into a black
+ * hole rather than a dark room.
  */
 export function LivingRoom({ loadActive = false }: { loadActive?: boolean }) {
   return (
     <group>
-      <Rug position={[0.02, 0.006, 0.05]} width={0.8} depth={0.62} />
-      <Sofa position={[0.12, 0, -0.02]} rotation={Math.PI / 2} />
-      <CoffeeTable position={[-0.16, 0, 0.02]} />
-      <FloorLamp position={[0.34, 0, -0.4]} />
-      <PottedPlant position={[0.3, 0, 0.42]} />
-      <Television position={[-0.48, 0.62, -0.13]} on={loadActive} />
+      {/* Seating group pulled forward to z ~ 0.28, from z ~ 0.
+          The room is only open on two faces — +X (no end wall) and +Z (the
+          section cut) — and the camera looks in obliquely across both. Sitting
+          at the middle of the room, the television ended up at the deepest,
+          most foreshortened point from that viewpoint, half hidden behind the
+          partition return. Everything the viewer is meant to read now sits in
+          the forward third, near the open corner, with only the lamp and the
+          plant left to occupy the back. */}
+      <Rug position={[0, 0.006, 0.28]} width={0.9} depth={0.58} />
+      {/* -PI/2, not +PI/2. The sofa is authored facing +Z (backrest at -Z),
+          and rotating +90 deg about Y swings that to +X — which pointed it
+          out through the open cutaway face, away from the room. The
+          television is at x = -0.46, so the seat has to face -X to look at
+          it across the coffee table. */}
+      <Sofa position={[0.18, 0, 0.28]} rotation={-Math.PI / 2} />
+      <CoffeeTable position={[-0.14, 0, 0.28]} />
+      <FloorLamp position={[0.36, 0, -0.45]} on={loadActive} />
+      <PottedPlant position={[-0.4, 0, -0.5]} />
+      {/* Kept on the partition facing +X rather than moved to the back wall:
+          the back wall faces the section cut, so a screen there would be seen
+          nearly edge-on and the Load conduit would have to travel the whole
+          depth of the building to reach it. TV_LOCAL in house.tsx mirrors this
+          position — the Load callout anchors on it. */}
+      <Television position={[-0.46, 0.62, 0.28]} on={loadActive} />
     </group>
   );
 }
 
 /** Upper-floor bedroom, origin at the room's floor centre. */
-export function Bedroom() {
+export function Bedroom({ loadActive = false }: { loadActive?: boolean }) {
   return (
     <group>
       <Rug position={[0.06, 0.006, 0.24]} width={0.6} depth={0.4} />
       <Bed position={[-0.06, 0, 0.02]} />
-      <Nightstand position={[0.32, 0, -0.28]} />
+      <Nightstand position={[0.32, 0, -0.28]} on={loadActive} />
       <PottedPlant position={[0.36, 0, 0.34]} />
     </group>
   );

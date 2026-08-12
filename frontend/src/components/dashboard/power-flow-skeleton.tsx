@@ -10,7 +10,11 @@ import { cn } from "@/lib/utils";
  */
 export function PowerFlowSkeleton({ className }: { className?: string }) {
   return (
-    <div className={cn("relative h-[320px] w-full sm:h-[380px]", className)} aria-hidden>
+    // Height must track POWER_FLOW_BOX in fleet-power-flow-view.tsx, or the
+    // panel jumps when the real view swaps in. Kept as a literal rather than
+    // importing that constant because this component is imported *by* that
+    // module, and sharing it the other way would be a cycle.
+    <div className={cn("relative h-[380px] w-full sm:h-[440px] xl:h-[520px]", className)} aria-hidden>
       {/* Solar — top */}
       <div className="absolute left-1/2 top-4 flex -translate-x-1/2 flex-col items-center gap-2">
         <Skeleton className="size-14 rounded-full" />

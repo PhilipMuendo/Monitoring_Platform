@@ -11,7 +11,12 @@ import { STUDIO } from "@/lib/power-flow-colors";
 // now instead. Kept forward of the facade (Z = 1.05) rather than flat
 // against the left wall, because from the front-right camera anything
 // tucked beside the house is occluded by it.
-export const BATTERY_POSITION: [number, number, number] = [-1.95, 0, 1.05];
+// Sits inside the undercroft now, tucked against the main body's left wall
+// (x = -1.7) and toward the open face so it stays visible from the camera.
+// Wall-mounted or wall-adjacent battery storage under cover is where these
+// actually live, and both reference renders place it exactly there rather
+// than freestanding on open ground.
+export const BATTERY_POSITION: [number, number, number] = [-1.92, 0, 0.72];
 export const BATTERY_ANCHOR: [number, number, number] = [BATTERY_POSITION[0], 1.12, BATTERY_POSITION[2]];
 
 interface BatteryPackProps {

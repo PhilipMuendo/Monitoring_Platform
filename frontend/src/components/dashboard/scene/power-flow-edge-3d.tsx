@@ -1,69 +1,128 @@
 "use client";
 
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
 import { STUDIO_INK } from "@/lib/power-flow-colors";
 
+export type Waypoint = readonly [number, number, number];
+
 interface PowerFlowEdge3DProps {
-  from: [number, number, number];
-  to: [number, number, number];
-  control: [number, number, number];
+  /** Ordered waypoints, source -> destination, in world space. */
+  points: readonly Waypoint[];
   active: boolean;
-  /** true = chevrons visually travel from `to` toward `from`. */
+  /** true = chevrons visually travel from the last waypoint toward the first. */
   reverse: boolean;
-  /** loops per second along the curve; scales with the edge's power magnitude. */
+  /** loops per second along the run; scales with the edge's power magnitude. */
   speed: number;
   particleCount: number;
   color: string;
 }
 
-// A light-grey conduit with small chevron arrows travelling along it.
+// A conduit run with small chevron arrows travelling along it.
 //
-// This replaces glowing sphere particles. Two problems with those: at panel
-// size a 0.038-radius additive sphere is a couple of pixels and reads as a
-// compression artifact rather than a moving charge, and a dot carries no
-// direction — the whole point of a power-flow diagram is showing which way
-// the energy goes, and grid import vs. export is the one thing an operator
-// most needs at a glance. A chevron states direction even in a still frame.
-export function PowerFlowEdge3D({ from, to, control, active, reverse, speed, particleCount, color }: PowerFlowEdge3DProps) {
-  const curve = useMemo(() => {
-    const start = reverse ? to : from;
-    const end = reverse ? from : to;
-    return new THREE.QuadraticBezierCurve3(
-      new THREE.Vector3(...start),
-      new THREE.Vector3(...control),
-      new THREE.Vector3(...end),
-    );
-  }, [from, to, control, reverse]);
+// Routed as an ORTHOGONAL POLYLINE with filleted corners, not as a single
+// smooth curve through open space.
+//
+// The previous version was one quadratic Bezier per run, with a hand-tuned
+// control point. That could never look right, and moving the control points
+// around only relocated the problem:
+//
+//   * A Bezier bulges away from the surface it is supposed to follow, so the
+//     runs floated in mid-air rather than reading as cable fixed to a wall.
+//   * To keep the curves out of the building mass their controls had to be
+//     thrown far forward of the facade — straight toward the camera, which
+//     looks along +Z as much as +X. A tube seen end-on foreshortens into a
+//     smear, which is exactly what the inverter-to-television run looked like.
+//   * Real electrical services do not follow parabolas. They run flat against
+//     surfaces, turn at right angles, and drop vertically into equipment.
+//     Sosen's plant view draws them exactly that way, which is why theirs
+//     read instantly as cabling and ours read as grey tubing.
+//
+// Corners are filleted rather than mitred because a genuinely sharp bend
+// makes TubeGeometry's Frenet frames spin, and because real conduit has a
+// bend radius anyway.
+function roundedPolyline(points: readonly Waypoint[], radius: number): THREE.CurvePath<THREE.Vector3> {
+  const path = new THREE.CurvePath<THREE.Vector3>();
+  const pts = points.map((p) => new THREE.Vector3(...p));
+  if (pts.length < 2) return path;
 
-  // The conduit itself is a neutral tube, not an accent-coloured line. The
-  // reference draws plain grey pipes and lets only the moving arrows carry
-  // colour, which keeps four simultaneous flows from turning the render
-  // into a tangle of coloured string.
+  let cursor = pts[0].clone();
+
+  for (let i = 1; i < pts.length - 1; i++) {
+    const corner = pts[i];
+    const incoming = new THREE.Vector3().subVectors(corner, cursor);
+    const outgoing = new THREE.Vector3().subVectors(pts[i + 1], corner);
+    const inLength = incoming.length();
+    const outLength = outgoing.length();
+    // Degenerate waypoint (repeated point) — nothing to round.
+    if (inLength < 1e-6 || outLength < 1e-6) continue;
+
+    incoming.normalize();
+    outgoing.normalize();
+    // Never eat more than half of either leg, or adjacent fillets overlap and
+    // the run doubles back on itself.
+    const r = Math.min(radius, inLength * 0.5, outLength * 0.5);
+
+    const cornerStart = corner.clone().addScaledVector(incoming, -r);
+    const cornerEnd = corner.clone().addScaledVector(outgoing, r);
+
+    if (cursor.distanceTo(cornerStart) > 1e-6) {
+      path.add(new THREE.LineCurve3(cursor, cornerStart));
+    }
+    path.add(new THREE.QuadraticBezierCurve3(cornerStart, corner.clone(), cornerEnd));
+    cursor = cornerEnd;
+  }
+
+  const end = pts[pts.length - 1];
+  if (cursor.distanceTo(end) > 1e-6) {
+    path.add(new THREE.LineCurve3(cursor, end.clone()));
+  }
+  return path;
+}
+
+const CORNER_RADIUS = 0.07;
+
+export function PowerFlowEdge3D({ points, active, reverse, speed, particleCount, color }: PowerFlowEdge3DProps) {
+  // Chevrons follow the run in the direction power actually flows, so the
+  // travel path is simply the route read backwards when reversed.
+  const curve = useMemo(
+    () => roundedPolyline(reverse ? [...points].reverse() : points, CORNER_RADIUS),
+    [points, reverse],
+  );
+
+  // The conduit itself is a neutral grey run, not an accent-coloured line.
+  // Only the moving arrows carry colour, which keeps four simultaneous flows
+  // from turning the render into a tangle of coloured string.
   const tube = useMemo(() => {
-    const path = new THREE.QuadraticBezierCurve3(
-      new THREE.Vector3(...from),
-      new THREE.Vector3(...control),
-      new THREE.Vector3(...to),
-    );
-    // Radius 0.028, not 0.012. At the camera's zoom (~62 px per world unit)
-    // the old tube came out under one pixel wide and simply vanished — the
-    // conduits were invisible in the panel. Same reason the chevrons below
-    // are sized in tenths of a unit rather than hundredths.
-    return new THREE.TubeGeometry(path, 30, 0.028, 8, false);
-  }, [from, control, to]);
+    const path = roundedPolyline(points, CORNER_RADIUS);
+    // Segment count scales with length so a long parapet run is not visibly
+    // faceted while a short drop does not waste geometry.
+    const segments = Math.max(24, Math.round(path.getLength() * 22));
+    return new THREE.TubeGeometry(path, segments, 0.017, 8, false);
+  }, [points]);
+
+  // r3f only auto-disposes what it created itself. This geometry is built
+  // here and handed over via the `geometry` prop, so it outlives the scene
+  // unless we free it — and the whole Canvas unmounts every time someone
+  // flips the 2D/3D toggle.
+  useEffect(() => () => tube.dispose(), [tube]);
 
   return (
     <group>
-      <mesh geometry={tube}>
+      {/* Near-opaque. At 0.55 the wall behind showed through and every run
+          turned into a grey haze rather than a line — worst where a run
+          crossed glazing, itself semi-transparent, so two translucent
+          surfaces stacked. Only the inactive state stays washed out, and
+          that carries meaning: nothing is flowing on this leg. */}
+      <mesh geometry={tube} castShadow>
         <meshStandardMaterial
-          color={STUDIO_INK.line}
-          roughness={0.7}
+          color={STUDIO_INK.conduit}
+          roughness={0.65}
           metalness={0.1}
           transparent
-          opacity={active ? 0.55 : 0.25}
+          opacity={active ? 0.95 : 0.4}
         />
       </mesh>
       {active &&
@@ -79,9 +138,12 @@ export function PowerFlowEdge3D({ from, to, control, active, reverse, speed, par
 // lookAt orients toward the direction of travel.
 const CHEVRON_GEOMETRY = (() => {
   const shape = new THREE.Shape();
-  const halfSpan = 0.14;
-  const depth = 0.19;
-  const thickness = 0.062;
+  // Sized against the 0.017-radius conduit it rides on. The previous
+  // 0.14 x 0.19 arrow was roughly eight times the width of its own line and
+  // read as a glyph floating nearby rather than as flow along the run.
+  const halfSpan = 0.085;
+  const depth = 0.12;
+  const thickness = 0.04;
   shape.moveTo(-halfSpan, 0);
   shape.lineTo(0, depth);
   shape.lineTo(halfSpan, 0);
@@ -102,7 +164,7 @@ function FlowChevron({
   speed,
   color,
 }: {
-  curve: THREE.QuadraticBezierCurve3;
+  curve: THREE.CurvePath<THREE.Vector3>;
   phase: number;
   speed: number;
   color: string;
@@ -118,12 +180,15 @@ function FlowChevron({
     elapsed.current += delta;
     const t = (phase + elapsed.current * speed) % 1;
 
-    const point = curve.getPoint(t);
+    // getPointAt / getTangentAt, not getPoint / getTangent: on a CurvePath
+    // built from segments of very different lengths, the unparameterised
+    // versions crawl through short fillets and jump across long straights.
+    // Arc-length parameterisation keeps the arrows moving at a constant
+    // speed along the whole run.
+    const point = curve.getPointAt(t);
     mesh.position.copy(point);
 
-    // Orient along the curve tangent so the arrow always points the way the
-    // power is flowing, including round the bends.
-    const tangent = curve.getTangent(t);
+    const tangent = curve.getTangentAt(t);
     lookTarget.copy(point).add(tangent);
     mesh.lookAt(lookTarget);
 
