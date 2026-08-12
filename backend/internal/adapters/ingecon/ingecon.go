@@ -46,14 +46,29 @@ type Adapter struct {
 	cfg    config.IngeconConfig
 	client *httpjson.Client
 	limit  *rateLimiter
+	// concurrency bounds simultaneous per-plant requests in FetchAll. The
+	// rateLimiter above still governs the request RATE — this only stops the
+	// loop from being serialized on round-trip latency while staying well
+	// inside that budget.
+	concurrency int
 }
 
 func New(cfg config.IngeconConfig, hooks httpjson.Hooks) *Adapter {
 	return &Adapter{
-		cfg:    cfg,
-		client: httpjson.New(string(models.BrandIngecon), httpjson.Defaults(), hooks),
-		limit:  newRateLimiter(maxRequestsPerMinute, time.Minute),
+		cfg:         cfg,
+		client:      httpjson.New(string(models.BrandIngecon), httpjson.Defaults(), hooks),
+		limit:       newRateLimiter(maxRequestsPerMinute, time.Minute),
+		concurrency: httpjson.DefaultConcurrency,
 	}
+}
+
+// WithConcurrency bounds simultaneous per-plant requests. Non-positive values
+// are ignored so a misconfigured env var cannot wedge the collection cycle.
+func (a *Adapter) WithConcurrency(n int) *Adapter {
+	if n > 0 {
+		a.concurrency = n
+	}
+	return a
 }
 
 func (a *Adapter) Name() string { return string(models.BrandIngecon) }
@@ -241,12 +256,18 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 		return nil, fmt.Errorf("ingecon: %w", err)
 	}
 
-	out := make([]models.SiteData, 0, len(plants))
+	// Disabled plants are filtered BEFORE the fetch rather than skipped inside
+	// it, so the mapped results line up one-to-one with the plants requested.
+	enabled := make([]plant, 0, len(plants))
 	for _, p := range plants {
-		if !p.Enabled {
-			continue
+		if p.Enabled {
+			enabled = append(enabled, p)
 		}
+	}
 
+	// Bounded concurrency rather than one plant at a time — see
+	// httpjson.MapBounded. The rateLimiter still governs the request rate.
+	out := httpjson.MapBounded(ctx, enabled, a.concurrency, func(ctx context.Context, p plant) models.SiteData {
 		// The sample endpoints are keyed by the plant's own calendar date.
 		// Using the server's date would ask an EAT plant for "yesterday"
 		// through the whole 21:00-00:00 UTC window.
@@ -266,8 +287,7 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 			// nothing about the plant — only that we could not read it —
 			// and the alert engine treats Offline as a wake-someone event.
 			slog.Warn("ingecon: telemetry unavailable", "plant", p.ID, "error", fetchErr)
-			out = append(out, models.SiteData{BrandSiteID: p.ID, Timestamp: time.Now(), Status: models.StatusUnknown})
-			continue
+			return models.SiteData{BrandSiteID: p.ID, Timestamp: time.Now(), Status: models.StatusUnknown}
 		}
 
 		// Connectivity is authoritative over anything derived from the
@@ -287,8 +307,8 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 			data.BatteryV = nil
 		}
 
-		out = append(out, data)
-	}
+		return data
+	})
 	return out, nil
 }
 

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SiteCard } from "@/components/dashboard/site-card";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSites } from "@/hooks/use-sites";
 import type { SiteStatus } from "@/lib/types";
 
@@ -15,15 +16,20 @@ export function SiteGrid() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<SiteStatus | "all">("all");
 
+  // Filtering trails the input rather than running per keystroke — see
+  // useDebouncedValue. The <input> stays bound to `search`, so typing is
+  // unaffected; only the grid re-render waits for the query to settle.
+  const debouncedSearch = useDebouncedValue(search);
+
   const filtered = useMemo(() => {
     if (!sites) return [];
-    const q = search.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     return sites.filter((site) => {
       if (statusFilter !== "all" && site.status !== statusFilter) return false;
       if (!q) return true;
       return site.name.toLowerCase().includes(q) || site.location.toLowerCase().includes(q);
     });
-  }, [sites, search, statusFilter]);
+  }, [sites, debouncedSearch, statusFilter]);
 
   return (
     <div className="space-y-4">

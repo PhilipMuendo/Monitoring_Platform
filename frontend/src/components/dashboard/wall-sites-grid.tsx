@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { BrandBadge } from "@/components/brand-badge";
 import { SITE_STATUS_ACCENT } from "@/components/dashboard/site-card";
@@ -21,11 +21,42 @@ import type { SiteWithStatus } from "@/lib/types";
  * and tint does the same job without moving anything: SITE_STATUS_ACCENT exists
  * precisely so a faulted site is findable without reading any text.
  */
+/**
+ * Tiles shown at once: a 5-column grid four rows deep.
+ *
+ * The grid uses auto-rows-fr inside a fixed-height panel, so every extra row
+ * makes every tile shorter. Twenty tiles is roughly the point where a name and
+ * a power reading are still legible from across a room; a hundred in one grid
+ * would be twenty rows of ~40px slivers, which is not a display, it is a
+ * texture. Beyond this the grid pages instead of shrinking.
+ */
+export const WALL_TILES_PER_PAGE = 20;
+const TILE_PAGE_INTERVAL_MS = 8_000;
+
+/** How many tile pages a fleet of this size needs. Used to size the wall dwell. */
+export function wallSitePageCount(siteCount: number): number {
+  return Math.max(1, Math.ceil(siteCount / WALL_TILES_PER_PAGE));
+}
+
 export function WallSitesGrid({ sites }: { sites: SiteWithStatus[] | undefined }) {
   const ordered = useMemo(
     () => [...(sites ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [sites],
   );
+
+  const pageCount = wallSitePageCount(ordered.length);
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    if (pageCount <= 1) return;
+    const id = setInterval(() => setPage((p) => (p + 1) % pageCount), TILE_PAGE_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [pageCount]);
+
+  // Clamped during render, like the Needs Attention list: pageCount shrinks as
+  // sites are removed, and a stale index would render an empty grid for a frame.
+  const safePage = page < pageCount ? page : 0;
+  const visible = ordered.slice(safePage * WALL_TILES_PER_PAGE, (safePage + 1) * WALL_TILES_PER_PAGE);
 
   if (ordered.length === 0) {
     return (
@@ -36,12 +67,24 @@ export function WallSitesGrid({ sites }: { sites: SiteWithStatus[] | undefined }
   }
 
   return (
-    // auto-rows-fr, so rows share the height evenly and the grid fills the
-    // panel rather than bunching at the top with dead space underneath.
-    <div className="grid size-full auto-rows-fr grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-      {ordered.map((site) => (
-        <WallSiteTile key={site.id} site={site} />
-      ))}
+    <div className="flex size-full min-h-0 flex-col gap-2">
+      {/* auto-rows-fr, so rows share the height evenly and the grid fills the
+          panel rather than bunching at the top with dead space underneath. */}
+      <div className="grid min-h-0 flex-1 auto-rows-fr grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        {visible.map((site) => (
+          <WallSiteTile key={site.id} site={site} />
+        ))}
+      </div>
+      {pageCount > 1 && (
+        <div className="flex shrink-0 items-center justify-center gap-1.5">
+          {Array.from({ length: pageCount }).map((_, i) => (
+            <span
+              key={i}
+              className={cn("size-1.5 rounded-full", i === safePage ? "bg-foreground" : "bg-muted-foreground/30")}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

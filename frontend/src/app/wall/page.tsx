@@ -5,7 +5,7 @@ import { AlertTriangle, CheckCircle2, Sun } from "lucide-react";
 
 import { FleetPowerFlowView } from "@/components/dashboard/fleet-power-flow-view";
 import { KpiRow } from "@/components/dashboard/kpi-row";
-import { WallSitesGrid } from "@/components/dashboard/wall-sites-grid";
+import { WallSitesGrid, wallSitePageCount } from "@/components/dashboard/wall-sites-grid";
 import { StatusBadge } from "@/components/status-badge";
 import { BrandBadge } from "@/components/brand-badge";
 import { RequireAuth } from "@/components/layout/require-auth";
@@ -31,6 +31,8 @@ const PAGE_INTERVAL_MS = 8_000;
 // read across twenty tiles.
 const OVERVIEW_DWELL_MS = 40_000;
 const SITES_DWELL_MS = 25_000;
+/** Must match TILE_PAGE_INTERVAL_MS in wall-sites-grid, which paces its own tile pages. */
+const TILE_PAGE_INTERVAL_MS = 8_000;
 
 /** Shown in the header so a viewer knows which page they are looking at. */
 const PAGE_LABELS: Record<string, string> = {
@@ -86,13 +88,21 @@ function WallDisplay() {
   // dashboard while data loads. The sites grid is skipped until there is
   // something in it, which also covers first paint and a failed fetch — with
   // one ready page the rotation stops and the wall simply holds on Overview.
-  const pages = useMemo<RotatingPage[]>(
-    () => [
+  const pages = useMemo<RotatingPage[]>(() => {
+    // The sites page holds long enough to show every tile page once. At 20
+    // sites that is a single grid and the base dwell; at 100 it is five grids
+    // cycling internally, and cutting away after 25s would mean the wall
+    // never showed most of the fleet.
+    const tilePages = wallSitePageCount(sites?.length ?? 0);
+    return [
       { id: "overview", ready: true, dwellMs: OVERVIEW_DWELL_MS },
-      { id: "sites", ready: (sites?.length ?? 0) > 0, dwellMs: SITES_DWELL_MS },
-    ],
-    [sites],
-  );
+      {
+        id: "sites",
+        ready: (sites?.length ?? 0) > 0,
+        dwellMs: Math.max(SITES_DWELL_MS, tilePages * TILE_PAGE_INTERVAL_MS),
+      },
+    ];
+  }, [sites]);
   const activePage = useWallRotation(pages);
   const rotating = readyCount(pages) > 1;
 

@@ -57,6 +57,8 @@ type Adapter struct {
 	client  *httpjson.Client
 	baseURL string
 	tokens  *httpjson.TokenCache
+	// concurrency bounds simultaneous per-station requests in FetchAll.
+	concurrency int
 }
 
 func New(cfg config.DeyeConfig, hooks httpjson.Hooks) *Adapter {
@@ -65,11 +67,23 @@ func New(cfg config.DeyeConfig, hooks httpjson.Hooks) *Adapter {
 		base = baseURLAS
 	}
 	a := &Adapter{
-		cfg:     cfg,
-		client:  httpjson.New(string(models.BrandDeye), httpjson.Defaults(), hooks),
-		baseURL: base,
+		cfg:         cfg,
+		client:      httpjson.New(string(models.BrandDeye), httpjson.Defaults(), hooks),
+		baseURL:     base,
+		concurrency: httpjson.DefaultConcurrency,
 	}
 	a.tokens = httpjson.NewTokenCache(tokenRefreshLead, a.fetchToken)
+	return a
+}
+
+// WithConcurrency bounds simultaneous per-station requests. Fluent rather than
+// a constructor argument so existing callers and tests keep working, matching
+// alertengine.Engine's WithMetrics/WithNotifier. Non-positive values are
+// ignored so a misconfigured env var cannot wedge the cycle.
+func (a *Adapter) WithConcurrency(n int) *Adapter {
+	if n > 0 {
+		a.concurrency = n
+	}
 	return a
 }
 
@@ -206,8 +220,12 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 		return nil, fmt.Errorf("deye: %w", err)
 	}
 
-	out := make([]models.SiteData, 0, len(stations))
-	for _, s := range stations {
+	// Fetched with bounded concurrency rather than one station at a time.
+	// Deye is the worst case in the fleet — two HTTP round trips per station
+	// (latest telemetry, then day energy) — so a sequential loop made the
+	// whole cycle O(stations) in vendor latency. Results come back in station
+	// order, so nothing downstream changes.
+	out := httpjson.MapBounded(ctx, stations, a.concurrency, func(ctx context.Context, s stationSummary) models.SiteData {
 		id := strconv.FormatInt(s.ID, 10)
 
 		data, err := a.fetchStationLatest(ctx, token, s)
@@ -218,12 +236,11 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 				a.tokens.Invalidate()
 			}
 			slog.Warn("deye: station telemetry unavailable", "station", s.ID, "error", err)
-			out = append(out, models.SiteData{
+			return models.SiteData{
 				BrandSiteID: id,
 				Timestamp:   time.Now(),
 				Status:      models.StatusUnknown,
-			})
-			continue
+			}
 		}
 
 		// Energy today needs a second call per station because it isn't in
@@ -237,8 +254,8 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 			slog.Warn("deye: energy-today unavailable", "station", s.ID, "error", err)
 		}
 
-		out = append(out, data)
-	}
+		return data
+	})
 	return out, nil
 }
 

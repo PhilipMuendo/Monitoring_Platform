@@ -118,3 +118,100 @@ Single VPS, Docker Compose, three containers (db, backend, frontend) behind a re
 | 8 | Next.js + shadcn/ui frontend | Accessible, fast to build, matches brief |
 | 9 | Adapter interface isolates brand quirks | Sosen scraper (or Ingecon once confirmed) drops in without touching core logic |
 | 10 | Hardcoded Africa/Nairobi (EAT) daytime window | Single-country deployment; avoids timezone-DB complexity for no real benefit |
+
+## 7. Performance & scaling
+
+### Where the time actually goes
+
+A collection cycle is dominated by **vendor API round-trip latency**, not by
+our own compute or by Postgres. Everything else is noise beside it:
+
+| Stage | Work per cycle at 20 sites | At 100 sites |
+|---|---|---|
+| Vendor fetch | ~28 HTTP calls (Deye makes **two** per station) | ~140 calls |
+| DB writes | 2 statements per reading | 200 statements |
+| Alert evaluation | ~5 queries per site | ~500 queries |
+
+Adapters used to fetch plants **one at a time**, which made a cycle O(sites) in
+vendor latency. They now fetch with bounded concurrency
+(`httpjson.MapBounded`, governed by `COLLECTOR_MAX_CONCURRENCY`). Measured
+deterministically against a mock server with 40 ms per call, 12 Deye stations
+at 2 calls each: **172 ms concurrent vs ~960 ms sequential**, a 5.6× reduction
+at concurrency 6.
+
+`COLLECTOR_MAX_CONCURRENCY` previously bounded only the database fan-out —
+not the vendor fetch it claimed to bound — so the one knob an operator would
+reach for to speed up collection had no effect on the part of the cycle that
+takes the time. It now applies to both.
+
+### Would 100 sites work?
+
+**Yes, on the current single-VPS design, with headroom.** The limiting factor
+is the vendor APIs, not this system.
+
+- **Collection.** At concurrency 10, ~140 calls at ~1 s each is roughly 15–20 s
+  per cycle against a 5-minute interval — about 6% duty. Even fully sequential
+  it would fit; concurrency is what keeps the margin comfortable when a vendor
+  is slow.
+- **Database.** ~700 queries per cycle is ~2.3 queries/second average. Trivial.
+  Raw metrics grow at ~100 sites × 288 readings/day ≈ 28.8k rows/day (~10.5M
+  rows/year), which is exactly what TimescaleDB hypertables are for, and the
+  7d/30d charts read the `site_metrics_hourly` continuous aggregate rather
+  than raw rows.
+- **API payloads.** `/sites` returns every site in one response: ~400 bytes per
+  site, so ~40 KB at 100 sites. Fine — but it is unbounded and unpaginated, and
+  that is the first thing that will need attention past a few hundred.
+- **Frontend.** The dashboard grid renders a card per site. `SiteCard` is
+  memoized on the fields it paints, so a 30-second poll re-renders only the
+  sites whose telemetry actually moved, and search is debounced so typing does
+  not refilter and repaint per keystroke.
+- **Wall display.** The site grid pages at 20 tiles rather than shrinking rows
+  (see `WALL_TILES_PER_PAGE`); 100 tiles in one fixed-height grid would be 20
+  rows of ~40 px slivers. Its dwell scales with page count so every site is
+  shown at least once per rotation.
+
+### What breaks first, past ~100
+
+Ranked by how soon it bites:
+
+1. **`GET /sites` is unpaginated.** Every consumer fetches the whole fleet
+   every 30 s. At 500+ sites this is the first thing to page or filter
+   server-side.
+2. **Sosen's plant list is capped at `limit=200`** in the query string. Past
+   200 plants it silently truncates — a correctness bug, not a slow one.
+3. **Vendor rate limits, not our throughput.** Ingecon documents 20 requests
+   per minute and the adapter self-throttles to 15; at ~2 calls per plant that
+   ceiling is reached around 7 Ingecon plants per minute, so a large Ingecon
+   fleet is paced by the vendor regardless of our concurrency.
+4. **Per-site `ResolveSite` query.** One lookup per reading per cycle to map a
+   `brand_site_id` to an internal UUID. Cheap and correct, but it is a lookup
+   of data that changes almost never — an obvious cache if cycle time ever
+   matters more than simplicity.
+5. **The collector is a single process.** Horizontal scaling would need cycle
+   work partitioned by brand or site range, and the chat rate limiter (in
+   memory, per process) would need shared backing.
+
+### Indexing
+
+`idx_alerts_site_type_created` (migration 0008) serves the alert engine's
+hottest query — `WHERE site_id AND type ORDER BY created_at DESC LIMIT 1`,
+run once per rule per site per cycle, i.e. ~400×/cycle at 100 sites. Before it,
+neither existing index applied: one matched only `site_id`, and the other was
+partial on `resolved_at IS NULL` which that query deliberately does not filter
+on. The planner read every alert for the site, filtered by type, then sorted.
+Alerts are never deleted, only resolved, so the cost grew with a site's entire
+alert history rather than staying constant.
+
+### Frontend bundle
+
+2.9 MB of client JS total, but almost none of it is on any critical path:
+
+- **1271 KB — three.js + postprocessing.** Behind `next/dynamic(ssr:false)`
+  and only fetched when the 3D power-flow view is selected. The default view
+  mode is 2D, so this is genuinely opt-in.
+- **360 KB — Recharts.** Lazy on the site detail route via
+  `site-history-charts.tsx`. Both charts share **one** dynamic boundary
+  deliberately: giving each its own duplicated Recharts into two chunks and
+  grew the bundle to 3.3 MB.
+- **4 MB — `car.glb`.** Draco-compressed, loaded only inside the 3D scene.
+

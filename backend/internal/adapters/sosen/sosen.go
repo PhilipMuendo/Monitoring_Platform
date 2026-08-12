@@ -60,15 +60,27 @@ type Adapter struct {
 	client  *httpjson.Client
 	baseURL string
 	tokens  *httpjson.TokenCache
+	// concurrency bounds simultaneous per-plant requests in FetchAll.
+	concurrency int
 }
 
 func New(cfg config.SosenConfig, hooks httpjson.Hooks) *Adapter {
 	a := &Adapter{
-		cfg:     cfg,
-		client:  httpjson.New(string(models.BrandSosen), httpjson.Defaults(), hooks),
-		baseURL: apiBaseURL,
+		cfg:         cfg,
+		client:      httpjson.New(string(models.BrandSosen), httpjson.Defaults(), hooks),
+		baseURL:     apiBaseURL,
+		concurrency: httpjson.DefaultConcurrency,
 	}
 	a.tokens = httpjson.NewTokenCache(time.Hour, a.fetchToken)
+	return a
+}
+
+// WithConcurrency bounds simultaneous per-plant requests. Non-positive values
+// are ignored so a misconfigured env var cannot wedge the collection cycle.
+func (a *Adapter) WithConcurrency(n int) *Adapter {
+	if n > 0 {
+		a.concurrency = n
+	}
 	return a
 }
 
@@ -268,8 +280,9 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 		return nil, fmt.Errorf("sosen: %w", err)
 	}
 
-	out := make([]models.SiteData, 0, len(plants))
-	for _, p := range plants {
+	// Bounded concurrency rather than one plant at a time — see
+	// httpjson.MapBounded. Results stay in plant order.
+	out := httpjson.MapBounded(ctx, plants, a.concurrency, func(ctx context.Context, p plantSummary) models.SiteData {
 		id := strconv.FormatInt(p.ID, 10)
 		data, err := a.fetchPlantData(ctx, p)
 		if err != nil {
@@ -277,11 +290,10 @@ func (a *Adapter) FetchAll(ctx context.Context) ([]models.SiteData, error) {
 			// nothing about whether the plant is running. Offline is what
 			// the alert engine escalates to a critical.
 			slog.Warn("sosen: plant telemetry unavailable", "plant", id, "error", err)
-			out = append(out, models.SiteData{BrandSiteID: id, Timestamp: time.Now(), Status: models.StatusUnknown})
-			continue
+			return models.SiteData{BrandSiteID: id, Timestamp: time.Now(), Status: models.StatusUnknown}
 		}
-		out = append(out, data)
-	}
+		return data
+	})
 	return out, nil
 }
 

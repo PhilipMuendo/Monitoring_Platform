@@ -178,15 +178,20 @@ func buildAdapters(cfg *config.Config, log *slog.Logger, metrics *observability.
 	// the adapters never import the metrics package.
 	hooks := httpjson.Hooks{OnAttempt: metrics.ObserveAdapterAttempt}
 
+	// COLLECTOR_MAX_CONCURRENCY is applied HERE, to the per-site vendor
+	// requests, which is what it has always claimed to bound. Until now it
+	// only bounded the database fan-out that follows FetchAll, so the knob an
+	// operator would reach for to speed up collection had no effect on the
+	// part of the cycle that actually takes the time.
 	var out []models.BrandAdapter
 	if cfg.Deye.Configured() {
-		out = append(out, deye.New(cfg.Deye, hooks))
+		out = append(out, deye.New(cfg.Deye, hooks).WithConcurrency(cfg.MaxConcurrency))
 	}
 	if cfg.Ingecon.Configured() {
-		out = append(out, ingecon.New(cfg.Ingecon, hooks))
+		out = append(out, ingecon.New(cfg.Ingecon, hooks).WithConcurrency(cfg.MaxConcurrency))
 	}
 	if cfg.Sosen.Configured() {
-		out = append(out, sosen.New(cfg.Sosen, hooks))
+		out = append(out, sosen.New(cfg.Sosen, hooks).WithConcurrency(cfg.MaxConcurrency))
 	}
 
 	brands := make([]string, len(out))

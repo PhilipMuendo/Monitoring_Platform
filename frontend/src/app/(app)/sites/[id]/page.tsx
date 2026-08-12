@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
@@ -11,9 +12,26 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BrandBadge } from "@/components/brand-badge";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { StatusBadge } from "@/components/status-badge";
-import { BatteryHistoryChart } from "@/components/site/battery-history-chart";
-import { PowerHistoryChart } from "@/components/site/power-history-chart";
 import { SitePowerFlow } from "@/components/site/site-power-flow";
+
+// Recharts is 357 KB — the single largest dependency on this route, bigger
+// than everything else the page needs put together. Imported statically it sat
+// on the critical path, so the header, KPI cards and power flow all waited on
+// a charting library before anything painted. Behind next/dynamic it streams
+// alongside the history fetch the charts need anyway, and never loads at all
+// for someone who opens a site and navigates away.
+//
+// ONE boundary around both charts, not one each: separate dynamic imports gave
+// each its own copy of Recharts and grew the bundle by 357 KB. See
+// site-history-charts.tsx.
+//
+// ssr:false because Recharts measures its container to size the SVG, which
+// needs a real layout; server-rendering it yields a zero-width chart that
+// resizes on hydration.
+const SiteHistoryCharts = dynamic(
+  () => import("@/components/site/site-history-charts").then((m) => m.SiteHistoryCharts),
+  { ssr: false, loading: () => <Skeleton className="h-[300px] w-full" /> },
+);
 import { SiteAlertsList } from "@/components/site/site-alerts-list";
 import { useSiteHistory } from "@/hooks/use-site-history";
 import { useSite } from "@/hooks/use-sites";
@@ -135,10 +153,7 @@ export default function SiteDetailPage() {
               ) : !history.points?.length ? (
                 <p className="py-10 text-center text-sm text-muted-foreground">No data for this period yet.</p>
               ) : (
-                <>
-                  <PowerHistoryChart points={history.points} range={range} />
-                  <BatteryHistoryChart points={history.points} range={range} />
-                </>
+                <SiteHistoryCharts points={history.points} range={range} />
               )}
             </TabsContent>
           </Tabs>

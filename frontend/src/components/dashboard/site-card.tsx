@@ -1,3 +1,4 @@
+import { memo } from "react";
 import Link from "next/link";
 import { BatteryCharging } from "lucide-react";
 
@@ -29,7 +30,34 @@ export const SITE_STATUS_ACCENT: Record<SiteWithStatus["status"], string> = {
   commissioning: "border-l-status-offline bg-muted/20",
 };
 
-export function SiteCard({ site }: { site: SiteWithStatus }) {
+/**
+ * Memoized because this renders once per site in a grid that re-renders on
+ * every keystroke in the search box and on every 30s poll.
+ *
+ * useSites returns a new array identity each poll, but the SITE OBJECTS inside
+ * it are structurally new too, so a default shallow compare would still
+ * re-render all of them. The comparator below comes down to the fields this
+ * card actually paints — a site whose telemetry has not moved does not
+ * re-render at all, and typing in the search box only re-renders the cards
+ * entering or leaving the filter rather than all of them.
+ */
+export const SiteCard = memo(SiteCardImpl, (prev, next) => {
+  const a = prev.site;
+  const b = next.site;
+  return (
+    a.id === b.id &&
+    a.status === b.status &&
+    a.name === b.name &&
+    a.location === b.location &&
+    a.brand === b.brand &&
+    a.capacity_kw === b.capacity_kw &&
+    a.power_w === b.power_w &&
+    a.soc === b.soc &&
+    a.last_seen_at === b.last_seen_at
+  );
+});
+
+function SiteCardImpl({ site }: { site: SiteWithStatus }) {
   return (
     <Link href={`/sites/${site.id}`} className="group block">
       <Card

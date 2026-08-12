@@ -94,7 +94,10 @@ type Config struct {
 	JWTRefreshTTL    time.Duration
 	PollInterval     time.Duration
 	CollectorTimeout time.Duration
-	// MaxConcurrency bounds in-flight per-site requests within one brand.
+	// MaxConcurrency bounds in-flight per-site requests within one brand —
+	// both the adapter's vendor API fetch and the database fan-out that
+	// follows it. Vendor round-trip latency dominates a collection cycle, so
+	// this is the single setting that governs how long one takes.
 	MaxConcurrency    int
 	LogLevel          string
 	CORSAllowedOrigin string
