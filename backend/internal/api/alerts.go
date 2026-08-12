@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"solar-monitor/internal/auth"
+	"solar-monitor/internal/models"
 	"solar-monitor/internal/storage"
 )
 
@@ -26,7 +28,7 @@ func (d *Deps) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Request) {
 	}
 	u, _ := auth.UserFromContext(r.Context())
 
-	alert, err := d.Alerts.Acknowledge(r.Context(), id, u.ID)
+	alert, err := d.acknowledgeAlert(r.Context(), id, u.ID, "dashboard")
 	if err != nil {
 		if err == storage.ErrNotFound {
 			writeError(w, http.StatusNotFound, "alert not found")
@@ -36,8 +38,19 @@ func (d *Deps) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d.Audit.Log(r.Context(), u.ID, "alert.acknowledge", "alert", id, nil)
-	d.SSEHub.Publish("alert.acknowledged", alert)
-
 	writeJSON(w, http.StatusOK, alert)
+}
+
+// acknowledgeAlert is shared by the HTTP acknowledge endpoint and the chat
+// tool call (chat.go) so the audit trail and the live SSE update stay
+// consistent no matter which surface triggered it. source is recorded in
+// the audit details ("dashboard" or "chat").
+func (d *Deps) acknowledgeAlert(ctx context.Context, alertID, actorID, source string) (models.Alert, error) {
+	alert, err := d.Alerts.Acknowledge(ctx, alertID, actorID)
+	if err != nil {
+		return alert, err
+	}
+	d.Audit.Log(ctx, actorID, "alert.acknowledge", "alert", alertID, map[string]string{"source": source})
+	d.SSEHub.Publish("alert.acknowledged", alert)
+	return alert, nil
 }

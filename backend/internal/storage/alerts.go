@@ -147,7 +147,8 @@ func (r *AlertRepo) CountSince(ctx context.Context, since time.Duration) (int, e
 }
 
 func collectAlerts(rows pgx.Rows) ([]models.Alert, error) {
-	var out []models.Alert
+	// Non-nil: a site with no alerts must serialize as [], not null.
+	out := []models.Alert{}
 	for rows.Next() {
 		a, err := scanAlert(rows)
 		if err != nil {

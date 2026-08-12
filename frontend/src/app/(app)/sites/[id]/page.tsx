@@ -69,11 +69,16 @@ export default function SiteDetailPage() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiCard icon={Sun} label="Solar" value={formatPower(site.power_w)} colorClass="text-solar" bgClass="bg-solar/10" />
         <KpiCard icon={Zap} label="Load" value={formatPower(site.load_power_w)} colorClass="text-load" bgClass="bg-load/10" />
+        {/* Null grid_power_w means the brand never reported grid flow (every
+            Deye site), not a measured zero. Coercing it to 0 rendered a
+            confident "0 W importing" for a quantity we do not have — the same
+            trap formatCapacity documents. Pass null through so it reads "—",
+            and drop the direction label when there is no direction. */}
         <KpiCard
           icon={Gauge}
           label="Grid"
-          value={formatPower(Math.abs(site.grid_power_w ?? 0))}
-          sublabel={(site.grid_power_w ?? 0) >= 0 ? "importing" : "exporting"}
+          value={formatPower(site.grid_power_w == null ? null : Math.abs(site.grid_power_w))}
+          sublabel={site.grid_power_w == null ? undefined : site.grid_power_w >= 0 ? "importing" : "exporting"}
           colorClass="text-grid"
           bgClass="bg-grid/10"
         />
@@ -114,7 +119,7 @@ export default function SiteDetailPage() {
             <TabsContent value={range} className="space-y-4">
               {historyLoading || !history ? (
                 <Skeleton className="h-72 w-full" />
-              ) : history.points.length === 0 ? (
+              ) : !history.points?.length ? (
                 <p className="py-10 text-center text-sm text-muted-foreground">No data for this period yet.</p>
               ) : (
                 <>

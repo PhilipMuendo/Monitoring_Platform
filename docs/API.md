@@ -23,6 +23,38 @@ Access tokens are short-lived JWTs (15 min default). Refresh tokens are opaque, 
 | GET | `/api/v1/sites/{id}/history?range=24h\|7d\|30d` | any role | Power-curve points (raw 5-min for 24h, hourly rollups for 7d/30d) |
 | GET | `/api/v1/sites/{id}/alerts` | any role | Alert history for one site |
 
+### Telemetry field conventions
+
+These hold for `/sites`, `/sites/{id}` and the points in `/sites/{id}/history`.
+
+**Sign.** `grid_power_w` is **positive when importing** from the grid and
+negative when exporting. Adapters normalize to this before storage, so the
+value never depends on which brand the site is (Sosen reports grid draw as
+negative natively and is negated on the way in). A value of exactly `0` is
+always `+0`.
+
+**Null vs zero.** Every telemetry field is nullable and the two states mean
+different things:
+
+| Value | Meaning |
+|---|---|
+| a number | the portal reported this measurement |
+| `null` / key absent | the portal did **not** report it — not a measured zero |
+
+Clients must render null as "—" or similar, never coerce it to `0`. Real
+cases in the current fleet: no Deye site reports `grid_power_w` or
+`energy_total_kwh` at all, and two Sosen plants omit `gridPower` from their
+realtime payload while the other six report it. Coercing produced a
+confident "0 W importing" for sites where grid flow was simply never
+measured.
+
+`load_power_w` is derived from `grid_power_w` for Sosen, so it is null
+wherever that is null rather than being guessed.
+
+**Array fields are always arrays.** `points`, alert lists and the admin user
+list serialize as `[]` when empty, never `null`, so clients can index and
+check `.length` unconditionally.
+
 ## Alerts
 
 | Method | Path | Auth | Description |

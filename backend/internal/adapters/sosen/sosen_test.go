@@ -2,6 +2,7 @@ package sosen
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -80,8 +81,145 @@ func TestFetchAll_OnlinePlantWithBattery(t *testing.T) {
 	if site.SOC == nil || *site.SOC != 60.0 {
 		t.Fatalf("SOC = %v, want 60.0 (parsed from string \"60.0\")", site.SOC)
 	}
-	if site.GridPower == nil || *site.GridPower != 12.0 {
-		t.Errorf("GridPower = %v, want 12", site.GridPower)
+	// Sosen's +12 means 12 W flowing OUT to the grid, so the normalized
+	// value is -12 under the platform's +import/-export convention. The
+	// fixture's own numbers are what pin this down: the adapter derives
+	// load = pac - gridPower = 3878, and 3890 W of PV only balances
+	// 3878 W of load if the remaining 12 W is exported.
+	if got := deref(t, "GridPower", site.GridPower); got != -12.0 {
+		t.Errorf("GridPower = %v, want -12 (vendor +12 = export -> -12 importing-positive)", got)
+	}
+	if got := deref(t, "LoadPower", site.LoadPower); got != 3878.0 {
+		t.Errorf("LoadPower = %v, want 3878 (pac - gridPower)", got)
+	}
+}
+
+// A plant drawing from the grid: the case that was rendering backwards on
+// the dashboard. Sosen reports gridPower negative for import, so the
+// normalized value must come out positive.
+func TestFetchAll_GridImportIsPositive(t *testing.T) {
+	a := newTestAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/oauth/token":
+			tokenHandler(w, r)
+		case r.URL.Path == "/api/v1/plants":
+			envelope(w, map[string]any{
+				"total": 1,
+				"infos": []map[string]any{
+					{"id": 192795, "name": "Oakfund", "status": 1, "pac": 0.0, "etoday": 0.0, "etotal": 0.0, "address": "Nairobi"},
+				},
+			})
+		case r.URL.Path == "/api/v1/plant/192795/realtime":
+			// Observed live: no PV, idle battery, 930 W load served entirely
+			// from the grid.
+			envelope(w, map[string]any{"pac": 0.0, "gridPower": -930.0, "batPower": 0.0})
+		case r.URL.Path == "/api/v1/plant/192795/deviceCount":
+			envelope(w, map[string]any{"warning": 0, "fault": 0, "total": 1, "normal": 1, "offline": 0})
+		case r.URL.Path == "/api/v1/plant/192795/inverters":
+			envelope(w, map[string]any{"infos": []map[string]any{{"sn": "S999"}}})
+		case r.URL.Path == "/api/v1/inverter/battery/S999/realtime":
+			envelope(w, map[string]any{"soc": "100.0"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	data, err := a.FetchAll(t.Context())
+	if err != nil {
+		t.Fatalf("FetchAll: %v", err)
+	}
+	if len(data) != 1 {
+		t.Fatalf("expected 1 site, got %d", len(data))
+	}
+	if got := deref(t, "GridPower", data[0].GridPower); got != 930.0 {
+		t.Errorf("GridPower = %v, want 930 (importing is positive)", got)
+	}
+	if got := deref(t, "LoadPower", data[0].LoadPower); got != 930.0 {
+		t.Errorf("LoadPower = %v, want 930 (all load served from grid)", got)
+	}
+}
+
+// Some plants omit gridPower from the realtime payload entirely (observed
+// live on SARAH BULOBA and MUSEVE SHRINE KITUI). Absent must stay absent:
+// reporting 0 would put a confident "0 W" on the dashboard for a quantity
+// the portal never measured, and load is derived from gridPower so it has
+// to drop out with it.
+func TestFetchAll_AbsentGridPowerStaysNil(t *testing.T) {
+	a := newTestAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/oauth/token":
+			tokenHandler(w, r)
+		case r.URL.Path == "/api/v1/plants":
+			envelope(w, map[string]any{
+				"total": 1,
+				"infos": []map[string]any{
+					{"id": 5150, "name": "SARAH BULOBA", "status": 1, "pac": 0.0, "etoday": 0.0, "etotal": 0.0, "address": "Division A"},
+				},
+			})
+		case r.URL.Path == "/api/v1/plant/5150/realtime":
+			// No gridPower key at all — the shape this test exists to pin.
+			envelope(w, map[string]any{"pac": 0.0, "batPower": 0.0})
+		case r.URL.Path == "/api/v1/plant/5150/deviceCount":
+			envelope(w, map[string]any{"warning": 0, "fault": 0, "total": 1, "normal": 1, "offline": 0})
+		case r.URL.Path == "/api/v1/plant/5150/inverters":
+			envelope(w, map[string]any{"infos": []map[string]any{{"sn": "S5150"}}})
+		case r.URL.Path == "/api/v1/inverter/battery/S5150/realtime":
+			envelope(w, map[string]any{"soc": "50.0"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	data, err := a.FetchAll(t.Context())
+	if err != nil {
+		t.Fatalf("FetchAll: %v", err)
+	}
+	if len(data) != 1 {
+		t.Fatalf("expected 1 site, got %d", len(data))
+	}
+	if data[0].GridPower != nil {
+		t.Errorf("GridPower = %v, want nil (key absent from payload)", *data[0].GridPower)
+	}
+	if data[0].LoadPower != nil {
+		t.Errorf("LoadPower = %v, want nil (derived from an absent gridPower)", *data[0].LoadPower)
+	}
+}
+
+// A measured zero must round-trip as +0, not -0: negating it is what the
+// import/export normalization does, and -0 survives into Postgres and the
+// JSON payload where it reads as a nonsense "-0 W".
+func TestFetchAll_MeasuredZeroGridIsNotNegativeZero(t *testing.T) {
+	a := newTestAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/oauth/token":
+			tokenHandler(w, r)
+		case r.URL.Path == "/api/v1/plants":
+			envelope(w, map[string]any{
+				"total": 1,
+				"infos": []map[string]any{
+					{"id": 77, "name": "Balanced", "status": 1, "pac": 0.0, "etoday": 0.0, "etotal": 0.0},
+				},
+			})
+		case r.URL.Path == "/api/v1/plant/77/realtime":
+			envelope(w, map[string]any{"pac": 0.0, "gridPower": 0.0, "batPower": 0.0})
+		case r.URL.Path == "/api/v1/plant/77/deviceCount":
+			envelope(w, map[string]any{"warning": 0, "fault": 0, "total": 1, "normal": 1, "offline": 0})
+		case r.URL.Path == "/api/v1/plant/77/inverters":
+			envelope(w, map[string]any{"infos": []map[string]any{{"sn": "S77"}}})
+		case r.URL.Path == "/api/v1/inverter/battery/S77/realtime":
+			envelope(w, map[string]any{"soc": "50.0"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	data, err := a.FetchAll(t.Context())
+	if err != nil {
+		t.Fatalf("FetchAll: %v", err)
+	}
+	got := deref(t, "GridPower", data[0].GridPower)
+	if math.Signbit(got) {
+		t.Errorf("GridPower = %v (negative zero), want +0", got)
 	}
 }
 

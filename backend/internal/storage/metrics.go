@@ -90,7 +90,11 @@ func scanPowerPoints(rows interface {
 	Scan(dest ...any) error
 	Err() error
 }) ([]PowerPoint, error) {
-	var out []PowerPoint
+	// Non-nil so a site with no rows in the window marshals to [] rather
+	// than null. A nil slice becomes JSON null, and every client then has
+	// to special-case it against the documented `points: PowerPoint[]`
+	// contract — the site detail page did not, and crashed on .length.
+	out := []PowerPoint{}
 	for rows.Next() {
 		var p PowerPoint
 		if err := rows.Scan(&p.Time, &p.PowerW, &p.LoadW, &p.GridW, &p.SOC, &p.EnergyKWh); err != nil {

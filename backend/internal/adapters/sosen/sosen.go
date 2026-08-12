@@ -2,6 +2,7 @@
 // inverters. Contrary to the project brief's assumption that Sosen has no
 // public API and would need a browser-automation scraper, live inspection
 // of the sosen.inteless.com portal (with the account's own credentials)
+
 // found that the portal's dashboard itself is a thin client over a real
 // JSON REST API at https://pv.inteless.com — the same kind of API every
 // other brand adapter talks to. No scraping is needed at all.
@@ -209,14 +210,32 @@ func (a *Adapter) Describe(ctx context.Context) ([]adapters.SiteDescriptor, erro
 }
 
 type plantRealtime struct {
-	Pac          float64 `json:"pac"`
-	Etoday       float64 `json:"etoday"`
-	Etotal       float64 `json:"etotal"`
-	GridPower    float64 `json:"gridPower"`
-	BatPower     float64 `json:"batPower"`
-	StoragePower float64 `json:"storagePower"`
-	TotalPower   float64 `json:"totalPower"` // capacity, kW
-	Efficiency   float64 `json:"efficiency"`
+	Pac    float64 `json:"pac"`
+	Etoday float64 `json:"etoday"`
+	Etotal float64 `json:"etotal"`
+	// Pointer, not float64: this key is simply absent from the realtime
+	// payload for some plants (observed live on SARAH BULOBA and MUSEVE
+	// SHRINE KITUI). Decoded into a value type, absent and a genuine
+	// measured 0 both arrive as 0, and the adapter then reports a
+	// confident "0 W" for a quantity the portal never sent — exactly the
+	// fabricated-zero the site page's grid KPI was fixed to stop showing.
+	GridPower    *float64 `json:"gridPower"`
+	BatPower     *float64 `json:"batPower"`
+	StoragePower float64  `json:"storagePower"`
+	TotalPower   float64  `json:"totalPower"` // capacity, kW
+	Efficiency   float64  `json:"efficiency"`
+}
+
+// negZero collapses negative zero to positive zero. Negating a measured 0
+// (the common case: a plant sitting at exactly 0 W of grid flow) produces
+// -0, which is numerically equal to 0 but persists through Postgres and
+// renders as "-0" once it reaches JSON. Callers only ever want the sign to
+// carry direction, and there is no direction at zero.
+func negZero(f float64) float64 {
+	if f == 0 {
+		return 0
+	}
+	return f
 }
 
 type deviceCount struct {
@@ -287,10 +306,29 @@ func (a *Adapter) fetchPlantData(ctx context.Context, p plantSummary) (models.Si
 	if raw, err := a.get(ctx, "/api/v1/plant/{id}/realtime", "/api/v1/plant/"+id+"/realtime?id="+id); err == nil {
 		var rt plantRealtime
 		if json.Unmarshal(raw, &rt) == nil {
-			grid := rt.GridPower
-			load := rt.Pac - rt.GridPower // best-effort; Sosen has no direct load field
-			data.GridPower = &grid
-			data.LoadPower = &load
+			// Sosen reports gridPower negative when the plant is DRAWING from
+			// the grid, which is the opposite of the convention the rest of
+			// the platform uses (+import / -export, as Deye documents and as
+			// Ingecon's FromGridToConsumption implies). Passing it through
+			// unnormalized inverted every Sosen arrow and label: Oakfund with
+			// pac=0, batPower=0 and gridPower=-930 is a house running its
+			// 930 W load entirely off the grid, but rendered as "exporting".
+			// Negate here so one convention holds fleet-wide.
+			//
+			// The load formula is unchanged and still balances: load is
+			// PV plus whatever is imported, and -*rt.GridPower is that import.
+			//
+			// Both readings are gated on the key being present: load is
+			// derived from gridPower, so without it there is no load figure
+			// either, and guessing one would be the same fabrication.
+			if rt.GridPower != nil {
+				// negZero: negating a genuine 0 yields -0, which survives
+				// into Postgres and marshals as "-0" in the API payload.
+				grid := negZero(-*rt.GridPower)
+				load := negZero(rt.Pac - *rt.GridPower) // best-effort; Sosen has no direct load field
+				data.GridPower = &grid
+				data.LoadPower = &load
+			}
 			data.Raw = raw
 		}
 	}

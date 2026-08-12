@@ -74,7 +74,8 @@ func (r *UserRepo) List(ctx context.Context) ([]models.User, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []models.User
+	// Non-nil so the admin users list serializes as [], not null.
+	out := []models.User{}
 	for rows.Next() {
 		u, err := scanUser(rows)
 		if err != nil {
