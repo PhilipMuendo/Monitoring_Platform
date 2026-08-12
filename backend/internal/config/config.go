@@ -129,6 +129,13 @@ type Config struct {
 	// The brief hardcodes a single-country (Kenya, EAT = UTC+3) deployment.
 	DaytimeStartHour int
 	DaytimeEndHour   int
+
+	// TilesDir is a directory holding a single self-hosted .pmtiles basemap
+	// file, served publicly at /tiles for the wall display's fleet map (see
+	// docs/TILES.md). Empty (the default) leaves the route unmounted and the
+	// map renders pins with no basemap underneath — cosmetic, not fatal, so
+	// unlike the guards below this is never a reason to refuse to boot.
+	TilesDir string
 }
 
 func Load() (*Config, error) {
@@ -184,6 +191,8 @@ func Load() (*Config, error) {
 
 		DaytimeStartHour: getInt("DAYTIME_START_HOUR", 6),
 		DaytimeEndHour:   getInt("DAYTIME_END_HOUR", 18),
+
+		TilesDir: getEnv("TILES_DIR", ""),
 	}
 
 	// Every reading this platform stores comes from a real inverter portal.

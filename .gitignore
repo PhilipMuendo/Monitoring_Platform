@@ -33,6 +33,11 @@ Thumbs.db
 # Docker
 db_data/
 
+# Self-hosted map tiles (see docs/TILES.md) — generated binary basemap
+# artifacts, not source.
+/tiles/
+*.pmtiles
+
 # Go coverage artifacts
 coverage.out
 coverage.html

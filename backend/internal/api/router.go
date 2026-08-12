@@ -65,6 +65,21 @@ func NewRouter(d *Deps) http.Handler {
 		r.Handle("/metrics", d.Metrics.Handler())
 	}
 
+	// Tiles are deliberately not behind the API's JWT auth. The pmtiles
+	// client fetches basemap chunks via plain range-request GETs it makes
+	// itself, with no way to attach an Authorization header, and what's
+	// served is a basemap derived from public OpenStreetMap data — nothing
+	// an anonymous visitor couldn't get from openstreetmap.org directly. The
+	// data that turns it into a *fleet* map (site coordinates + status)
+	// stays behind JWT on GET /api/v1/sites, unchanged. A query-param token
+	// (like /alerts/stream below) was considered and rejected: rotating a
+	// 15-minute access token would invalidate the browser's cached tile
+	// requests and trigger a re-download storm on the one client that most
+	// needs to avoid network chatter — the wall display's kiosk TV.
+	if h := tileHandler(d.Cfg.TilesDir); h != nil {
+		r.Handle("/tiles/*", http.StripPrefix("/tiles/", h))
+	}
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/auth/login", d.handleLogin)
 		r.Post("/auth/refresh", d.handleRefresh)
