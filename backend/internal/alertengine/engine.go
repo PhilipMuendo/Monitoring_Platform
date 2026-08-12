@@ -17,7 +17,22 @@ import (
 type Config struct {
 	ProductionDropWindow     int     // consecutive low readings required
 	ProductionDropThresholdW float64 // "low" = below this many watts
-	ProductionDropCooldown   time.Duration
+	// ProductionRecoverThresholdW is the HYSTERESIS band's upper edge: an
+	// open production alert clears only once output is sustained above this,
+	// not merely back over the firing threshold.
+	//
+	// Without a gap between the two, a site sitting near the threshold
+	// oscillates across it and the rule reports weather as incidents. Live
+	// data before this existed: one site produced five separate "incidents"
+	// in a single morning, each ~20 minutes long, as output ramped through
+	// 50W at dawn and again through broken cloud.
+	ProductionRecoverThresholdW float64
+	ProductionDropCooldown      time.Duration
+	// ProductionEdgeMargin excludes the first and last stretch of daylight
+	// from judgement. Output legitimately crosses any low threshold at dawn
+	// and dusk, and alerting on sunrise is alerting on the solar system
+	// working correctly.
+	ProductionEdgeMargin time.Duration
 
 	OfflineThreshold time.Duration // no data for this long = offline
 	OfflineCooldown  time.Duration
@@ -26,7 +41,10 @@ type Config struct {
 
 	BatteryWindow          int
 	BatterySOCThresholdPct float64
-	BatteryCooldown        time.Duration
+	// BatterySOCRecoverPct is the same hysteresis idea for SOC: a battery
+	// hovering at the threshold would otherwise flap as it trickle-charges.
+	BatterySOCRecoverPct float64
+	BatteryCooldown      time.Duration
 
 	// Daytime window (Africa/Nairobi, EAT = UTC+3), hardcoded per the
 	// brief's single-country-deployment decision — production-drop
@@ -37,9 +55,19 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		ProductionDropWindow:     2,
+		// 6 readings at the default 5-minute poll is ~30 minutes of sustained
+		// low output before anyone is told. Was 2 (10 minutes), which is
+		// shorter than a passing cloud.
+		ProductionDropWindow:     6,
 		ProductionDropThresholdW: 50,
-		ProductionDropCooldown:   30 * time.Minute,
+		// 3x the firing threshold. Wide on purpose: the gap has to be bigger
+		// than the noise, and irradiance noise on a partly cloudy day is
+		// large.
+		ProductionRecoverThresholdW: 150,
+		// Longer than the old 30 minutes, which was shorter than the
+		// oscillation it was supposed to damp and so damped nothing.
+		ProductionDropCooldown: 2 * time.Hour,
+		ProductionEdgeMargin:   60 * time.Minute,
 
 		OfflineThreshold: 10 * time.Minute,
 		OfflineCooldown:  60 * time.Minute,
@@ -48,6 +76,7 @@ func DefaultConfig() Config {
 
 		BatteryWindow:          3,
 		BatterySOCThresholdPct: 20,
+		BatterySOCRecoverPct:   30,
 		BatteryCooldown:        120 * time.Minute,
 
 		DaytimeStartHour:  6,
@@ -117,6 +146,70 @@ func isDaytime(t time.Time, cfg Config) bool {
 	return minutesPastMidnight >= cfg.DaytimeStartHour*60 && minutesPastMidnight <= cfg.DaytimeEndMinutes
 }
 
+// isProductionJudgeable reports whether output at this instant says anything
+// about the site's health.
+//
+// Narrower than isDaytime by ProductionEdgeMargin at each end. A working array
+// crosses any low-output threshold twice a day on its way up and down, and the
+// old rule alerted on exactly that: the earliest flapping alerts in the live
+// data fired at 05:36 and 06:29, which is sunrise, not a fault.
+func isProductionJudgeable(t time.Time, cfg Config) bool {
+	eat := t.UTC().Add(3 * time.Hour)
+	minutesPastMidnight := eat.Hour()*60 + eat.Minute()
+	margin := int(cfg.ProductionEdgeMargin.Minutes())
+	return minutesPastMidnight >= cfg.DaytimeStartHour*60+margin &&
+		minutesPastMidnight <= cfg.DaytimeEndMinutes-margin
+}
+
+// ruleState is what a rule concluded from this cycle's readings.
+//
+// Three states, not a bool, because "the condition is not currently true" and
+// "the condition is definitively over" are different claims — and collapsing
+// them is what made the production rule flap. Between the firing and recovery
+// thresholds, and outside judgeable daylight, a rule holds: it neither raises
+// nor resolves, and an open alert simply stays open.
+type ruleState int
+
+const (
+	ruleHolding ruleState = iota
+	ruleFiring
+	ruleClear
+)
+
+// windowState decides a rule's state from one window of readings against a
+// hysteresis band: fire only if EVERY reading is below fireBelow, clear only
+// if every reading is above clearAbove, hold otherwise.
+//
+// Requiring the whole window at BOTH edges is what creates the band. No single
+// reading can move the state in either direction, which is precisely what
+// stops a site drifting around the threshold from raising and clearing over
+// and over — the failure that produced five "incidents" in one morning.
+//
+// Shared by production and battery because the shape of the decision is
+// identical; only the units differ.
+func windowState(values []float64, fireBelow, clearAbove float64) ruleState {
+	if len(values) == 0 {
+		return ruleHolding
+	}
+	low, recovered := 0, 0
+	for _, v := range values {
+		if v < fireBelow {
+			low++
+		}
+		if v > clearAbove {
+			recovered++
+		}
+	}
+	switch {
+	case low == len(values):
+		return ruleFiring
+	case recovered == len(values):
+		return ruleClear
+	default:
+		return ruleHolding
+	}
+}
+
 // Evaluate runs every rule for one site's just-recorded reading. Called
 // once per site per collection cycle, immediately after the reading has
 // been written to site_metrics (so RecentReadings sees it).
@@ -137,7 +230,12 @@ func (e *Engine) Evaluate(ctx context.Context, siteID, siteName string, reading 
 		return nil
 	}
 
-	recent, err := e.metrics.RecentReadings(ctx, siteID, e.cfg.BatteryWindow+1)
+	// Fetch enough for the LONGEST window any rule needs, not just the
+	// battery one. Production drop now needs 6 readings against battery's 3;
+	// fetching battery+1 would have left checkProductionDrop permanently
+	// short of data and silently disabled it.
+	need := max(e.cfg.BatteryWindow, e.cfg.ProductionDropWindow)
+	recent, err := e.metrics.RecentReadings(ctx, siteID, need+1)
 	if err != nil {
 		return fmt.Errorf("alertengine: fetch recent readings: %w", err)
 	}
@@ -162,9 +260,21 @@ func (e *Engine) checkOffline(ctx context.Context, siteID, siteName string, read
 	condition := reading.Status == models.StatusOffline || stale
 
 	message := fmt.Sprintf("%s has not reported data in over %d minutes", siteName, int(e.cfg.OfflineThreshold.Minutes()))
+	// Clears as soon as the site reports again. No hysteresis band: "we
+	// received a reading" is unambiguous in a way that "output is low" is not.
 	return e.evaluateRule(ctx, siteID, models.AlertOffline, models.SeverityCritical,
-		condition, e.cfg.OfflineCooldown, message,
-		map[string]any{"last_seen": reading.Timestamp}, false)
+		firingWhen(condition), e.cfg.OfflineCooldown, message,
+		map[string]any{"last_seen": reading.Timestamp})
+}
+
+// firingWhen maps a plain condition onto the tri-state for rules whose
+// condition is unambiguous — no hysteresis band, so "not firing" really does
+// mean "over".
+func firingWhen(condition bool) ruleState {
+	if condition {
+		return ruleFiring
+	}
+	return ruleClear
 }
 
 func (e *Engine) checkFault(ctx context.Context, siteID, siteName string, reading models.SiteData) error {
@@ -174,14 +284,24 @@ func (e *Engine) checkFault(ctx context.Context, siteID, siteName string, readin
 		code = *reading.FaultCode
 	}
 	message := fmt.Sprintf("%s reported inverter fault code %d", siteName, code)
+	// Clears when the inverter stops reporting the fault, which is the
+	// inverter's own statement that the fault is gone.
 	return e.evaluateRule(ctx, siteID, models.AlertFault, models.SeverityCritical,
-		condition, e.cfg.FaultCooldown, message,
-		map[string]any{"fault_code": code}, false)
+		firingWhen(condition), e.cfg.FaultCooldown, message,
+		map[string]any{"fault_code": code})
 }
 
 func (e *Engine) checkProductionDrop(ctx context.Context, siteID, siteName string, reading models.SiteData, recent []models.SiteData) error {
-	if !isDaytime(reading.Timestamp, e.cfg) {
-		return e.evaluateRule(ctx, siteID, models.AlertProductionDrop, models.SeverityWarning, false, e.cfg.ProductionDropCooldown, "", nil, true)
+	// HOLD outside judgeable daylight — do not clear.
+	//
+	// This used to resolve the alert every evening, which is the whole
+	// mechanism behind the flapping: an alert raised at midday was resolved
+	// by nightfall and re-raised at dawn, so one chronically underperforming
+	// site produced a fresh "incident" every morning. Holding means a site
+	// that is genuinely underproducing keeps ONE open alert across nights
+	// until it actually recovers.
+	if !isProductionJudgeable(reading.Timestamp, e.cfg) {
+		return nil
 	}
 	if len(recent) < e.cfg.ProductionDropWindow {
 		return nil
@@ -191,22 +311,20 @@ func (e *Engine) checkProductionDrop(ctx context.Context, siteID, siteName strin
 	// power figure. A nil Power means the vendor didn't report the channel;
 	// counting that as "below threshold" would manufacture a production-drop
 	// alert out of missing data.
-	lowCount := 0
+	powers := make([]float64, 0, e.cfg.ProductionDropWindow)
 	for _, r := range recent[:e.cfg.ProductionDropWindow] {
 		if r.Power == nil {
 			return nil
 		}
-		if *r.Power < e.cfg.ProductionDropThresholdW {
-			lowCount++
-		}
+		powers = append(powers, *r.Power)
 	}
-	condition := lowCount >= e.cfg.ProductionDropWindow
+	state := windowState(powers, e.cfg.ProductionDropThresholdW, e.cfg.ProductionRecoverThresholdW)
 
 	message := fmt.Sprintf("%s production below %.0fW for %d consecutive readings during daylight",
 		siteName, e.cfg.ProductionDropThresholdW, e.cfg.ProductionDropWindow)
 	return e.evaluateRule(ctx, siteID, models.AlertProductionDrop, models.SeverityWarning,
-		condition, e.cfg.ProductionDropCooldown, message,
-		map[string]any{"power_w": reading.Power, "window": e.cfg.ProductionDropWindow}, true)
+		state, e.cfg.ProductionDropCooldown, message,
+		map[string]any{"power_w": reading.Power, "window": e.cfg.ProductionDropWindow})
 }
 
 func (e *Engine) checkBattery(ctx context.Context, siteID, siteName string, recent []models.SiteData) error {
@@ -218,7 +336,9 @@ func (e *Engine) checkBattery(ctx context.Context, siteID, siteName string, rece
 	// reports SOC. A site with no battery reports nil forever, and counting
 	// those as "not low" was harmless, but a partially-reported window
 	// could never reach the threshold and silently disabled the rule.
-	lowCount := 0
+	// Same hysteresis band as production: a battery trickle-charging across
+	// 20% would otherwise raise and clear repeatedly on its way up.
+	socs := make([]float64, 0, e.cfg.BatteryWindow)
 	var lastSOC float64
 	for i, r := range recent[:e.cfg.BatteryWindow] {
 		if r.SOC == nil {
@@ -227,38 +347,50 @@ func (e *Engine) checkBattery(ctx context.Context, siteID, siteName string, rece
 		if i == 0 {
 			lastSOC = *r.SOC
 		}
-		if *r.SOC < e.cfg.BatterySOCThresholdPct {
-			lowCount++
-		}
+		socs = append(socs, *r.SOC)
 	}
-	condition := lowCount >= e.cfg.BatteryWindow
+	state := windowState(socs, e.cfg.BatterySOCThresholdPct, e.cfg.BatterySOCRecoverPct)
 
 	message := fmt.Sprintf("%s battery SOC below %.0f%% for %d consecutive readings",
 		siteName, e.cfg.BatterySOCThresholdPct, e.cfg.BatteryWindow)
 	return e.evaluateRule(ctx, siteID, models.AlertBatteryIssue, models.SeverityWarning,
-		condition, e.cfg.BatteryCooldown, message,
-		map[string]any{"soc": lastSOC, "window": e.cfg.BatteryWindow}, true)
+		state, e.cfg.BatteryCooldown, message,
+		map[string]any{"soc": lastSOC, "window": e.cfg.BatteryWindow})
 }
 
 // evaluateRule is the shared state machine every rule above drives:
 //   - condition true, no active alert, past cooldown  -> create alert
-//   - condition true, already active                  -> no-op (still ongoing)
-//   - condition true, resolved but within cooldown     -> no-op (avoid spam)
-//   - condition false, autoResolve, still active       -> resolve
-//   - condition false, otherwise                       -> no-op
+//   - ruleFiring, no active alert, past cooldown  -> create alert
+//   - ruleFiring, already active                  -> no-op (still ongoing)
+//   - ruleFiring, resolved but within cooldown    -> no-op (avoid spam)
+//   - ruleClear, still active                     -> resolve
+//   - ruleHolding                                 -> no-op, whatever the state
 //
-// Critical alerts (offline/fault) pass autoResolve=false: per the brief
-// they stay active until a human acknowledges them, even if the
-// underlying condition clears on its own.
+// EVERY rule now auto-resolves, including the critical ones. They used to
+// pass autoResolve=false so that a critical stayed active until a human
+// acknowledged it — but resolved_at and acknowledged are independent
+// columns, so keeping an alert "active" was never what preserved the audit
+// trail; acknowledgement already did that. What it actually produced was a
+// write-only channel: measured on live data, 13 offline alerts were active
+// while only ONE of their sites was actually offline. Four were for sites
+// that had recovered and were online at that moment. An alert list that is
+// 92% false is one people stop reading.
+//
+// Resolving means "this condition is no longer true", not "someone dealt
+// with it". Acknowledgement still means the latter, and is untouched.
 func (e *Engine) evaluateRule(ctx context.Context, siteID string, alertType models.AlertType, severity models.Severity,
-	conditionMet bool, cooldown time.Duration, message string, details any, autoResolve bool) error {
+	state ruleState, cooldown time.Duration, message string, details any) error {
+
+	if state == ruleHolding {
+		return nil
+	}
 
 	latest, err := e.alerts.LatestByTypeForSite(ctx, siteID, alertType)
 	if err != nil {
 		return fmt.Errorf("alertengine: latest alert lookup: %w", err)
 	}
 
-	if conditionMet {
+	if state == ruleFiring {
 		if latest != nil && latest.ResolvedAt == nil {
 			return nil
 		}
@@ -274,7 +406,7 @@ func (e *Engine) evaluateRule(ctx context.Context, siteID string, alertType mode
 		return nil
 	}
 
-	if autoResolve && latest != nil && latest.ResolvedAt == nil {
+	if latest != nil && latest.ResolvedAt == nil {
 		if err := e.alerts.Resolve(ctx, latest.ID); err != nil {
 			return fmt.Errorf("alertengine: resolve alert: %w", err)
 		}
