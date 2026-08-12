@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, Sun } from "lucide-react";
 
 import { FleetPowerFlowView } from "@/components/dashboard/fleet-power-flow-view";
 import { KpiRow } from "@/components/dashboard/kpi-row";
+import { WallSitesGrid } from "@/components/dashboard/wall-sites-grid";
 import { StatusBadge } from "@/components/status-badge";
 import { BrandBadge } from "@/components/brand-badge";
 import { RequireAuth } from "@/components/layout/require-auth";
@@ -12,10 +13,30 @@ import { useAlertStream } from "@/hooks/use-alert-stream";
 import { useFleetSummary } from "@/hooks/use-fleet-summary";
 import { usePowerFlowViewMode } from "@/hooks/use-power-flow-view-mode";
 import { useSites } from "@/hooks/use-sites";
+import { useWallRotation } from "@/hooks/use-wall-rotation";
 import { formatPower } from "@/lib/format";
+import { readyCount, type RotatingPage } from "@/lib/wall-rotation";
+import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 6;
 const PAGE_INTERVAL_MS = 8_000;
+
+// How long each page holds the screen.
+//
+// Overview gets much longer than the others because it carries its own inner
+// rotation: the "Needs Attention" list pages every PAGE_INTERVAL_MS, so a
+// short dwell here would cut away before the later entries were ever shown.
+// 40s covers five of its sub-pages, which is more than the list will normally
+// have. The sites grid is static once drawn, so it only needs long enough to
+// read across twenty tiles.
+const OVERVIEW_DWELL_MS = 40_000;
+const SITES_DWELL_MS = 25_000;
+
+/** Shown in the header so a viewer knows which page they are looking at. */
+const PAGE_LABELS: Record<string, string> = {
+  overview: "Fleet overview",
+  sites: "All sites",
+};
 
 /**
  * Only warn when the *collection pipeline* has actually stalled. This is
@@ -61,6 +82,20 @@ function WallDisplay() {
   const visible = problemSites.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
   const isStale = summary != null && summary.data_age_seconds > STALE_AFTER_SECONDS;
 
+  // Overview is always ready: it is the wall's home page and still reads as a
+  // dashboard while data loads. The sites grid is skipped until there is
+  // something in it, which also covers first paint and a failed fetch — with
+  // one ready page the rotation stops and the wall simply holds on Overview.
+  const pages = useMemo<RotatingPage[]>(
+    () => [
+      { id: "overview", ready: true, dwellMs: OVERVIEW_DWELL_MS },
+      { id: "sites", ready: (sites?.length ?? 0) > 0, dwellMs: SITES_DWELL_MS },
+    ],
+    [sites],
+  );
+  const activePage = useWallRotation(pages);
+  const rotating = readyCount(pages) > 1;
+
   // h-screen + overflow-hidden, and every band below is either shrink-0 or a
   // min-h-0 flex child. An unattended wall display has nobody to scroll it,
   // so anything below the fold is simply never seen.
@@ -71,7 +106,27 @@ function WallDisplay() {
           <Sun className="size-8 text-solar" />
           <div>
             <h1 className="text-2xl font-bold">Solar Fleet Monitor</h1>
-            <p className="text-sm text-muted-foreground">Live fleet overview</p>
+            {/* The subtitle names the page on screen instead of repeating the
+                title. Dots only appear once there is more than one page worth
+                showing — with a single ready page nothing rotates, and a lone
+                dot would imply otherwise. */}
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-muted-foreground">{PAGE_LABELS[pages[activePage].id]}</p>
+              {rotating && (
+                <div className="flex items-center gap-1">
+                  {pages.map((p, i) => (
+                    <span
+                      key={p.id}
+                      className={cn(
+                        "size-1.5 rounded-full",
+                        i === activePage ? "bg-foreground" : "bg-muted-foreground/30",
+                        !p.ready && "opacity-0",
+                      )}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
         <div className="text-right">
@@ -90,60 +145,77 @@ function WallDisplay() {
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 xl:grid-cols-5">
-        <div className="flex min-h-0 flex-col rounded-xl border bg-card p-5 xl:col-span-3">
-          <h2 className="mb-2 shrink-0 text-lg font-semibold">Fleet Power Flow</h2>
-          {summary && (
-            <FleetPowerFlowView summary={summary} mode={mode} className="min-h-0 flex-1" />
+      {/* Both pages stay MOUNTED, hidden with display:none rather than
+          unmounted. Unmounting would drop the 3D canvas's WebGL context and
+          re-stream the 4 MB car model on every rotation, which the wall's TV
+          browser would feel. Hidden costs nothing either: a display:none
+          element reports as not intersecting, so useRenderActive already puts
+          the canvas into frameloop="never" while it is off screen. */}
+      <div className="relative min-h-0 flex-1">
+        <div
+          className={cn(
+            "absolute inset-0 grid grid-cols-1 gap-6 xl:grid-cols-5",
+            pages[activePage].id !== "overview" && "hidden",
           )}
-        </div>
-
-        <div className="flex min-h-0 flex-col rounded-xl border bg-card p-5 xl:col-span-2">
-          <div className="mb-3 flex shrink-0 items-center justify-between">
-            <h2 className="text-lg font-semibold">Needs Attention</h2>
-            {problemSites.length > 0 && (
-              <span className="rounded-full bg-status-critical/15 px-2.5 py-0.5 text-sm font-medium text-status-critical">
-                {problemSites.length}
-              </span>
+        >
+          <div className="flex min-h-0 flex-col rounded-xl border bg-card p-5 xl:col-span-3">
+            <h2 className="mb-2 shrink-0 text-lg font-semibold">Fleet Power Flow</h2>
+            {summary && (
+              <FleetPowerFlowView summary={summary} mode={mode} className="min-h-0 flex-1" />
             )}
           </div>
 
-          {problemSites.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-              <CheckCircle2 className="size-10 text-status-online" />
-              <p>Every site is online</p>
-            </div>
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-              {visible.map((site) => (
-                <div
-                  key={site.id}
-                  className="flex min-h-0 flex-1 items-center justify-between gap-3 rounded-lg border px-3"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate font-medium">{site.name}</span>
-                      <BrandBadge brand={site.brand} />
-                    </div>
-                    <StatusBadge status={site.status} className="mt-1" />
-                  </div>
-                  <div className="shrink-0 text-right font-mono text-sm tabular-nums text-muted-foreground">
-                    {formatPower(site.power_w)}
-                  </div>
-                </div>
-              ))}
-              {pageCount > 1 && (
-                <div className="flex shrink-0 items-center justify-center gap-1.5 pt-1">
-                  {Array.from({ length: pageCount }).map((_, i) => (
-                    <span
-                      key={i}
-                      className={`size-1.5 rounded-full ${i === safePage ? "bg-foreground" : "bg-muted-foreground/30"}`}
-                    />
-                  ))}
-                </div>
+          <div className="flex min-h-0 flex-col rounded-xl border bg-card p-5 xl:col-span-2">
+            <div className="mb-3 flex shrink-0 items-center justify-between">
+              <h2 className="text-lg font-semibold">Needs Attention</h2>
+              {problemSites.length > 0 && (
+                <span className="rounded-full bg-status-critical/15 px-2.5 py-0.5 text-sm font-medium text-status-critical">
+                  {problemSites.length}
+                </span>
               )}
             </div>
-          )}
+
+            {problemSites.length === 0 ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                <CheckCircle2 className="size-10 text-status-online" />
+                <p>Every site is online</p>
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+                {visible.map((site) => (
+                  <div
+                    key={site.id}
+                    className="flex min-h-0 flex-1 items-center justify-between gap-3 rounded-lg border px-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate font-medium">{site.name}</span>
+                        <BrandBadge brand={site.brand} />
+                      </div>
+                      <StatusBadge status={site.status} className="mt-1" />
+                    </div>
+                    <div className="shrink-0 text-right font-mono text-sm tabular-nums text-muted-foreground">
+                      {formatPower(site.power_w)}
+                    </div>
+                  </div>
+                ))}
+                {pageCount > 1 && (
+                  <div className="flex shrink-0 items-center justify-center gap-1.5 pt-1">
+                    {Array.from({ length: pageCount }).map((_, i) => (
+                      <span
+                        key={i}
+                        className={`size-1.5 rounded-full ${i === safePage ? "bg-foreground" : "bg-muted-foreground/30"}`}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className={cn("absolute inset-0", pages[activePage].id !== "sites" && "hidden")}>
+          <WallSitesGrid sites={sites} />
         </div>
       </div>
 

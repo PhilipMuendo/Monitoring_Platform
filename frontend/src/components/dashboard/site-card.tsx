@@ -13,7 +13,11 @@ import type { SiteWithStatus } from "@/lib/types";
 // A faulted or offline site has to be findable in a wall of 50 cards without
 // reading any text, so status drives a left accent bar and a faint tint —
 // not just the small status dot, which disappears at a glance.
-const STATUS_ACCENT: Record<SiteWithStatus["status"], string> = {
+//
+// Exported because the wall display's site grid needs exactly this treatment
+// at a larger size. Shared rather than restated so status never means one
+// colour on the dashboard and another on the wall.
+export const SITE_STATUS_ACCENT: Record<SiteWithStatus["status"], string> = {
   online: "border-l-transparent",
   warning: "border-l-status-warning bg-status-warning/[0.04]",
   error: "border-l-status-critical bg-status-critical/[0.06]",
@@ -32,7 +36,7 @@ export function SiteCard({ site }: { site: SiteWithStatus }) {
         className={cn(
           "gap-2 border-l-[3px] py-4 transition-all duration-200",
           "group-hover:-translate-y-0.5 group-hover:border-border/80 group-hover:shadow-md",
-          STATUS_ACCENT[site.status],
+          SITE_STATUS_ACCENT[site.status],
         )}
       >
         <CardContent className="px-4">
