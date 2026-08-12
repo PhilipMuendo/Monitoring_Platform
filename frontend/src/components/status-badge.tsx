@@ -27,17 +27,6 @@ const TEXT_CLASS: Record<SiteStatus, string> = {
 /** Statuses that carry no live telemetry, so the pulse animation is off. */
 const INERT: ReadonlySet<SiteStatus> = new Set<SiteStatus>(["offline", "unknown", "commissioning"]);
 
-/**
- * A function rather than exporting DOT_CLASS directly, so callers can't
- * mutate the shared map. Other renderers of site status (e.g. the fleet map
- * pins) should call this instead of restating the color mapping, so the
- * error->critical aliasing and unknown/commissioning->offline collapse stay
- * in one place.
- */
-export function statusDotClass(status: SiteStatus): string {
-  return DOT_CLASS[status];
-}
-
 export function StatusDot({ status, pulse = false }: { status: SiteStatus; pulse?: boolean }) {
   return (
     <span className="relative flex size-2.5">

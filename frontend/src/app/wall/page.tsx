@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Sun } from "lucide-react";
 
-import { FleetMapView } from "@/components/dashboard/fleet-map-view";
 import { FleetPowerFlowView } from "@/components/dashboard/fleet-power-flow-view";
 import { KpiRow } from "@/components/dashboard/kpi-row";
 import { StatusBadge } from "@/components/status-badge";
@@ -15,11 +14,7 @@ import { usePowerFlowViewMode } from "@/hooks/use-power-flow-view-mode";
 import { useSites } from "@/hooks/use-sites";
 import { formatPower } from "@/lib/format";
 
-// The map now takes ~38% of the right-hand column (see the grid below), so
-// "Needs Attention" has less vertical room than it did when it had the
-// whole column. 4 rather than 3 keeps a dozen problem sites cycling every
-// 24s instead of a sluggish 32s at the existing PAGE_INTERVAL_MS.
-const PAGE_SIZE = 4;
+const PAGE_SIZE = 6;
 const PAGE_INTERVAL_MS = 8_000;
 
 /**
@@ -95,78 +90,60 @@ function WallDisplay() {
         </div>
       )}
 
-      {/* 5:2 — the power flow is the feature the office actually watches, so
-          it takes ~71% of the width. The right column is untouched by the
-          map addition below: its size/props aren't part of this split. */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 xl:grid-cols-7">
-        <div className="flex min-h-0 flex-col rounded-xl border bg-card p-5 xl:col-span-5">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 xl:grid-cols-5">
+        <div className="flex min-h-0 flex-col rounded-xl border bg-card p-5 xl:col-span-3">
           <h2 className="mb-2 shrink-0 text-lg font-semibold">Fleet Power Flow</h2>
           {summary && (
             <FleetPowerFlowView summary={summary} mode={mode} className="min-h-0 flex-1" />
           )}
         </div>
 
-        {/* Split vertically rather than flex-1/flex-1: if both cards grew
-            and shrank with content, the map would resize every time a site
-            flips status (i.e. constantly on a live fleet), and every resize
-            needs an expensive invalidateSize(). Pinning the map to a fixed
-            share confines that to just the stale-banner toggle below. */}
-        <div className="flex min-h-0 flex-col gap-6 xl:col-span-2">
-          <div className="flex min-h-0 shrink-0 basis-[38%] flex-col rounded-xl border bg-card p-4">
-            <h2 className="mb-2 shrink-0 text-lg font-semibold">Fleet Map</h2>
-            <FleetMapView sites={sites} className="min-h-0 flex-1" />
-            <p className="mt-1 shrink-0 text-[10px] text-muted-foreground">
-              © Protomaps © OpenStreetMap contributors
-            </p>
-          </div>
-
-          <div className="flex min-h-0 flex-1 flex-col rounded-xl border bg-card p-5">
-            <div className="mb-3 flex shrink-0 items-center justify-between">
-              <h2 className="text-lg font-semibold">Needs Attention</h2>
-              {problemSites.length > 0 && (
-                <span className="rounded-full bg-status-critical/15 px-2.5 py-0.5 text-sm font-medium text-status-critical">
-                  {problemSites.length}
-                </span>
-              )}
-            </div>
-
-            {problemSites.length === 0 ? (
-              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-                <CheckCircle2 className="size-10 text-status-online" />
-                <p>Every site is online</p>
-              </div>
-            ) : (
-              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-                {visible.map((site) => (
-                  <div
-                    key={site.id}
-                    className="flex min-h-0 flex-1 items-center justify-between gap-3 rounded-lg border px-3"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate font-medium">{site.name}</span>
-                        <BrandBadge brand={site.brand} />
-                      </div>
-                      <StatusBadge status={site.status} className="mt-1" />
-                    </div>
-                    <div className="shrink-0 text-right font-mono text-sm tabular-nums text-muted-foreground">
-                      {formatPower(site.power_w)}
-                    </div>
-                  </div>
-                ))}
-                {pageCount > 1 && (
-                  <div className="flex shrink-0 items-center justify-center gap-1.5 pt-1">
-                    {Array.from({ length: pageCount }).map((_, i) => (
-                      <span
-                        key={i}
-                        className={`size-1.5 rounded-full ${i === safePage ? "bg-foreground" : "bg-muted-foreground/30"}`}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
+        <div className="flex min-h-0 flex-col rounded-xl border bg-card p-5 xl:col-span-2">
+          <div className="mb-3 flex shrink-0 items-center justify-between">
+            <h2 className="text-lg font-semibold">Needs Attention</h2>
+            {problemSites.length > 0 && (
+              <span className="rounded-full bg-status-critical/15 px-2.5 py-0.5 text-sm font-medium text-status-critical">
+                {problemSites.length}
+              </span>
             )}
           </div>
+
+          {problemSites.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+              <CheckCircle2 className="size-10 text-status-online" />
+              <p>Every site is online</p>
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+              {visible.map((site) => (
+                <div
+                  key={site.id}
+                  className="flex min-h-0 flex-1 items-center justify-between gap-3 rounded-lg border px-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium">{site.name}</span>
+                      <BrandBadge brand={site.brand} />
+                    </div>
+                    <StatusBadge status={site.status} className="mt-1" />
+                  </div>
+                  <div className="shrink-0 text-right font-mono text-sm tabular-nums text-muted-foreground">
+                    {formatPower(site.power_w)}
+                  </div>
+                </div>
+              ))}
+              {pageCount > 1 && (
+                <div className="flex shrink-0 items-center justify-center gap-1.5 pt-1">
+                  {Array.from({ length: pageCount }).map((_, i) => (
+                    <span
+                      key={i}
+                      className={`size-1.5 rounded-full ${i === safePage ? "bg-foreground" : "bg-muted-foreground/30"}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

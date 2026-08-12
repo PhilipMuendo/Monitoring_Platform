@@ -60,14 +60,6 @@ services:
       SOSEN_USERNAME: ${SOSEN_USERNAME:-}
       SOSEN_PASSWORD: ${SOSEN_PASSWORD:-}
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:3000}
-      TILES_DIR: ${TILES_DIR:-/app/tiles}
-    volumes:
-      # A bind mount, not a Dockerfile COPY: the .pmtiles basemap (see
-      # docs/TILES.md) is tens of MB on a completely different change
-      # cadence from the Go binary, and doesn't belong baked into an image
-      # layer. Missing ./tiles on the host is fine — tileHandler degrades to
-      # a 404-per-request rather than failing the mount.
-      - ./tiles:/app/tiles:ro
 
   frontend:
     build:
