@@ -70,6 +70,11 @@ type SosenConfig struct {
 
 func (c SosenConfig) Configured() bool { return c.Username != "" && c.Password != "" }
 
+// ChatEnabled reports whether the AI chat widget's backend is usable.
+// Unlike the vendor Configured() checks, this never blocks boot when
+// false — see the GeminiAPIKey field doc comment on Config.
+func (c Config) ChatEnabled() bool { return c.GeminiAPIKey != "" }
+
 type Config struct {
 	Port string
 	DB   DBConfig
@@ -109,6 +114,12 @@ type Config struct {
 	Deye    DeyeConfig
 	Ingecon IngeconConfig
 	Sosen   SosenConfig
+
+	// Gemini powers the optional AI chat widget. Left blank, ChatEnabled
+	// reports false and the chat endpoint returns 503 — unlike the vendor
+	// credentials above, chat is additive and never blocks boot.
+	GeminiAPIKey string
+	GeminiModel  string
 
 	AdminSeedEmail    string
 	AdminSeedPassword string
@@ -163,6 +174,9 @@ func Load() (*Config, error) {
 			Username: getEnv("SOSEN_USERNAME", ""),
 			Password: getEnv("SOSEN_PASSWORD", ""),
 		},
+
+		GeminiAPIKey: getEnv("GEMINI_API_KEY", ""),
+		GeminiModel:  getEnv("GEMINI_MODEL", "gemini-1.5-flash"),
 
 		AdminSeedEmail:    getEnv("ADMIN_SEED_EMAIL", "admin@solarfleet.local"),
 		AdminSeedPassword: getEnv("ADMIN_SEED_PASSWORD", "ChangeMe123!"),

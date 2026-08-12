@@ -15,6 +15,7 @@ import (
 
 	"solar-monitor/internal/adapters"
 	"solar-monitor/internal/adapters/deye"
+	"solar-monitor/internal/adapters/gemini"
 	"solar-monitor/internal/adapters/httpjson"
 	"solar-monitor/internal/adapters/ingecon"
 	"solar-monitor/internal/adapters/sosen"
@@ -73,6 +74,12 @@ func main() {
 
 	sseHub := api.NewSSEHub()
 
+	var geminiClient *gemini.Client
+	if cfg.ChatEnabled() {
+		geminiClient = gemini.New(cfg.GeminiAPIKey, cfg.GeminiModel, httpjson.Hooks{OnAttempt: metrics.ObserveAdapterAttempt})
+		log.Info("ai chat enabled", "model", cfg.GeminiModel)
+	}
+
 	alertCfg := alertengine.DefaultConfig()
 	alertCfg.DaytimeStartHour = cfg.DaytimeStartHour
 	alertCfg.DaytimeEndMinutes = cfg.DaytimeEndHour*60 + 30
@@ -121,11 +128,13 @@ func main() {
 			Window:      cfg.LoginWindow,
 			Lockout:     cfg.LoginLockout,
 		}),
-		Collector:  coll,
-		Metrics:    metrics,
-		SSEHub:     sseHub,
-		Describers: describers(brandAdapters),
-		StartedAt:  time.Now(),
+		Collector:   coll,
+		Metrics:     metrics,
+		SSEHub:      sseHub,
+		Gemini:      geminiClient,
+		ChatLimiter: api.NewChatLimiter(),
+		Describers:  describers(brandAdapters),
+		StartedAt:   time.Now(),
 	})
 
 	srv := &http.Server{

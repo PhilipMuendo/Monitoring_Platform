@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"solar-monitor/internal/adapters"
+	"solar-monitor/internal/adapters/gemini"
 	"solar-monitor/internal/auth"
 	"solar-monitor/internal/collector"
 	"solar-monitor/internal/config"
@@ -35,6 +36,11 @@ type Deps struct {
 	Collector     *collector.Collector
 	Metrics       *observability.Metrics
 	SSEHub        *SSEHub
+	// Gemini is nil when GEMINI_API_KEY is unset — handleChat returns 503
+	// in that case rather than the server refusing to boot, since chat is
+	// additive, not core telemetry.
+	Gemini      *gemini.Client
+	ChatLimiter *chatLimiter
 	// Describers lets admin site-creation validate a brand_site_id against
 	// the vendor before inserting a row that could never receive telemetry.
 	Describers map[models.Brand]adapters.SiteDescriber
@@ -80,6 +86,7 @@ func NewRouter(d *Deps) http.Handler {
 			r.Get("/sites/{id}/alerts", d.handleSiteAlerts)
 
 			r.Get("/alerts", d.handleListActiveAlerts)
+			r.Post("/chat", d.handleChat)
 
 			r.Group(func(r chi.Router) {
 				r.Use(auth.RequireRole(models.RoleAdmin, models.RoleTechnician))

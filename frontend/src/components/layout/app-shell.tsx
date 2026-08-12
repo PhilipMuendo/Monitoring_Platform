@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { LayoutDashboard, LogOut, MonitorPlay, Settings, Sun } from "lucide-react";
 
+import { ChatWidget } from "@/components/chat/chat-widget";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -114,6 +115,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">{children}</main>
+
+      <ChatWidget />
     </div>
   );
 }
