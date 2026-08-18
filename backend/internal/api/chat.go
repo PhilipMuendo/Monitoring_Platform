@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
+	"strings"
 	"time"
 
 	"solar-monitor/internal/adapters/gemini"
@@ -36,10 +38,17 @@ const chatSystemPrompt = `You are the assistant embedded in a solar fleet monito
 	`health of the monitoring platform itself — using only the tools provided. Never invent numbers or site ` +
 	`names; if a tool call fails or a site isn't found, say so plainly. Keep answers short and concrete ` +
 	`(numbers, site names, timestamps) rather than generic. ` +
-	`Call tools rather than guessing: to answer about a specific site you usually need list_sites first to ` +
-	`resolve its name to an id, then get_site or get_site_history. Combine tools freely for questions that ` +
-	`need more than one — comparing sites, or ranking them by production, means listing sites and reading the ` +
-	`figures rather than asking the user to narrow it down. ` +
+	`Call tools rather than guessing. ` +
+	`FOR A QUESTION ABOUT A NAMED SITE, call find_site with part of the name — that resolves the name to the ` +
+	`site_id the other site tools need, and already returns that site's current telemetry, so a simple status ` +
+	`question needs nothing else. Use get_site_history for questions about trends or a period ("this week", ` +
+	`"yesterday", "is it getting worse"), and get_site_alerts for what has gone wrong there. Do NOT page ` +
+	`through list_sites hunting for a name: it is capped and a large fleet will not fit, so a site you cannot ` +
+	`see is not the same as a site that does not exist. ` +
+	`If find_site returns several matches, answer about all of them briefly or ask which one — never silently ` +
+	`pick one. If it returns none, say the fleet has no site matching that name rather than inventing figures. ` +
+	`Combine tools freely for questions that need more than one — comparing sites, or ranking them by ` +
+	`production, means listing sites and reading the figures rather than asking the user to narrow it down. ` +
 	`Distinguish a site being down from the platform failing to reach it: sites reported as "unknown" mean we ` +
 	`could not read them, not that they stopped generating. If a whole brand is unknown, call get_system_health ` +
 	`— that is a collection problem on our side, not a fleet outage. ` +
@@ -70,8 +79,19 @@ var chatReadTools = []gemini.FunctionDeclaration{
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"all":{"type":"boolean","description":"include inactive sites, default false"}}}`),
 	},
 	{
+		Name: "find_site",
+		Description: "Find sites by name or location, case-insensitive partial match. " +
+			"USE THIS FIRST for any question about a named site — it is how you turn a name " +
+			"the user typed into the site_id that get_site, get_site_history and get_site_alerts need. " +
+			"Returns the matching sites with their ids and current telemetry, so for a simple " +
+			"'how is X doing' this is often the only call you need. " +
+			"If it returns nothing, the site is not in the fleet under that name — say so and " +
+			"offer list_sites; do not guess an id.",
+		Parameters: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"part of the site name or location, e.g. \"kitale\""},"all":{"type":"boolean","description":"include inactive sites, default false"}},"required":["query"]}`),
+	},
+	{
 		Name:        "get_site",
-		Description: "Get one site's details and latest telemetry by its id.",
+		Description: "Get one site's details and latest telemetry by its id. Resolve a NAME to an id with find_site first.",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"site_id":{"type":"string"}},"required":["site_id"]}`),
 	},
 	{
@@ -167,7 +187,7 @@ func (d *Deps) handleChat(w http.ResponseWriter, r *http.Request) {
 			// likely to be wrong.
 			slog.Error("chat generation failed",
 				"error", err, "model", d.Cfg.GeminiModel, "user_id", u.ID)
-			writeSSE(w, flusher, "error", map[string]string{"error": "the assistant is unavailable right now"})
+			writeSSE(w, flusher, "error", map[string]string{"error": chatErrorMessage(err)})
 			return
 		}
 
@@ -189,7 +209,7 @@ func (d *Deps) handleChat(w http.ResponseWriter, r *http.Request) {
 				writeSSE(w, flusher, "tool_result", map[string]any{"tool": fc.Name, "alert": res.acknowledged})
 			}
 			responseParts = append(responseParts, gemini.Part{
-				FunctionResponse: &gemini.FunctionResponse{Name: fc.Name, Response: res.response},
+				FunctionResponse: &gemini.FunctionResponse{Name: fc.Name, Response: toolResponseObject(res.response)},
 			})
 		}
 		contents = append(contents, gemini.Content{Role: "user", Parts: responseParts})
@@ -268,6 +288,26 @@ func (d *Deps) dispatchChatTool(ctx context.Context, u auth.AuthedUser, fc gemin
 		}
 		return chatToolResult{response: page}
 
+	case "find_site":
+		q := strings.TrimSpace(argStr("query"))
+		if q == "" {
+			return chatToolResult{response: map[string]string{"error": "query is required"}}
+		}
+		all, _ := args["all"].(bool)
+		matches, err := d.Sites.SearchByName(ctx, q, !all)
+		if err != nil {
+			return chatToolResult{response: toolError(err)}
+		}
+		// Returned as a named object rather than a bare list so "no such site"
+		// is unambiguous. An empty array reads to the model as an unhelpful
+		// tool result it might retry or work around; matched:0 alongside the
+		// query it searched for is a fact it can report.
+		return chatToolResult{response: map[string]any{
+			"query":   q,
+			"matched": len(matches),
+			"sites":   matches,
+		}}
+
 	case "get_site":
 		site, err := d.Sites.GetByID(ctx, argStr("site_id"))
 		if err != nil {
@@ -334,6 +374,45 @@ func toolError(err error) map[string]string {
 	return map[string]string{"error": err.Error()}
 }
 
+// toolResponseObject makes a tool's return value legal as a functionResponse.
+//
+// Gemini's functionResponse.response is a protobuf Struct, which means it must
+// be a JSON OBJECT. Hand it an array and the whole request is rejected:
+//
+//	HTTP 400 Unknown name "response" at 'contents[6].parts[0].function_response':
+//	Proto field is not repeating, cannot start list.
+//
+// list_active_alerts and get_site_alerts both returned bare slices, so any
+// question that reached either one killed the conversation — and because those
+// are exactly the tools a question about ONE SITE tends to reach ("how is
+// Sanana hotel doing?" -> list_sites -> get_site -> get_site_alerts), site
+// questions failed while fleet-level questions worked. The error surfaced as
+// the generic "assistant is unavailable", which pointed nowhere near the cause.
+//
+// Applied HERE, at the single point where every function response is built,
+// rather than by fixing the two offending tools. A per-tool fix leaves the
+// same trap set for the next tool that returns a list, and this is not a
+// mistake a reviewer would catch — the Go compiles, the JSON is valid, and it
+// only fails once the model happens to call that tool.
+//
+// The count is not just padding to satisfy the type: it saves the model
+// counting a list to answer "how many", which it does badly.
+func toolResponseObject(v any) any {
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() {
+		return map[string]any{}
+	}
+	if k := rv.Kind(); k == reflect.Slice || k == reflect.Array {
+		// []byte marshals to a base64 string, not a list, so it is already
+		// legal and must not be wrapped.
+		if rv.Type().Elem().Kind() == reflect.Uint8 {
+			return v
+		}
+		return map[string]any{"items": v, "count": rv.Len()}
+	}
+	return v
+}
+
 // turnParts converts one Gemini Result back into the Parts of the "model"
 // turn to append to the conversation, so the next Generate call sees
 // exactly what the model said and asked for.
@@ -360,12 +439,55 @@ func turnParts(result gemini.Result) []gemini.Part {
 	return parts
 }
 
+// chatErrorMessage turns an upstream failure into something the operator can
+// act on.
+//
+// Every failure used to render as "the assistant is unavailable right now".
+// That single sentence covered a retired model id, a missing API key, and a
+// thirty-second capacity blip — three problems with completely different
+// responses ("fix the config", "add the key", "press send again"). It is worth
+// separating the one the user can resolve themselves in five seconds from the
+// two that need an engineer, because the ambiguity is what sends people
+// looking for a bug that is not there.
+//
+// Matched on the response body rather than a typed error: the adapter wraps
+// the upstream status into the error string, and introducing a typed error
+// hierarchy through httpjson for two cases is more machinery than the problem
+// deserves. Kept to the two statuses Google actually returns for load.
+func chatErrorMessage(err error) string {
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "HTTP 503"), strings.Contains(s, "UNAVAILABLE"):
+		return "the assistant is busy right now — try that again in a moment"
+	case strings.Contains(s, "HTTP 429"), strings.Contains(s, "RESOURCE_EXHAUSTED"):
+		return "the assistant has hit its rate limit — try again shortly"
+	default:
+		return "the assistant is unavailable right now"
+	}
+}
+
 func historyToContents(history []chatMessage) []gemini.Content {
 	if len(history) > chatMaxHistory {
 		history = history[len(history)-chatMaxHistory:]
 	}
 	out := make([]gemini.Content, 0, len(history))
 	for _, m := range history {
+		// Drop empty turns. Gemini rejects a part with no content outright —
+		// `contents[i].parts[0].data: required oneof field 'data' must have
+		// one initialized field`, HTTP 400 — which takes down the whole
+		// request, not just that turn.
+		//
+		// This has bitten once already, and the shape of the failure is what
+		// makes it worth guarding here rather than only at the client: the
+		// browser recorded an empty assistant turn after a request failed, so
+		// ONE transient upstream error (a 503 capacity spike) permanently
+		// bricked that conversation — every subsequent message failed with a
+		// 400 that looked nothing like the original problem. The client no
+		// longer creates that state, but history arrives over the wire from
+		// something we do not control, so it is filtered on arrival too.
+		if strings.TrimSpace(m.Text) == "" {
+			continue
+		}
 		role := "user"
 		if m.Role == "model" || m.Role == "assistant" {
 			role = "model"

@@ -1,6 +1,11 @@
 // Package config loads and validates all runtime configuration from
 // environment variables exactly once at boot into a typed struct, so
 // nothing downstream ever calls os.Getenv directly.
+//
+// Load also fills gaps from a .env file when one is present (ENV_FILE, or
+// ./.env by default). The environment always wins over the file, so this is
+// a developer convenience that cannot affect a container or systemd unit —
+// see envfile.go.
 package config
 
 import (
@@ -132,11 +137,33 @@ type Config struct {
 	// The brief hardcodes a single-country (Kenya, EAT = UTC+3) deployment.
 	DaytimeStartHour int
 	DaytimeEndHour   int
+
+	// Where file-based configuration came from, and how much of it applied.
+	// Recorded rather than logged inline because the logger does not exist
+	// yet at this point (its level is one of the values being loaded). main
+	// logs these on the first line after the logger is built, so "why did my
+	// .env edit do nothing" is answered by a boot log instead of a debugging
+	// session — see envfile.go for the full rationale.
+	EnvFile        string
+	EnvFileApplied int
 }
 
 func Load() (*Config, error) {
+	// Before anything reads the environment. Values already present always
+	// win, so this only fills gaps — see envfile.go.
+	envFile, explicit := os.LookupEnv("ENV_FILE")
+	if !explicit {
+		envFile = defaultEnvFile
+	}
+	applied, err := loadEnvFile(envFile, explicit)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
-		Port: getEnv("PORT", "8080"),
+		EnvFile:        envFile,
+		EnvFileApplied: applied,
+		Port:           getEnv("PORT", "8080"),
 		DB: DBConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     getEnv("DB_PORT", "5432"),

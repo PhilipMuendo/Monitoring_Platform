@@ -41,6 +41,15 @@ func main() {
 	}
 	log := logger.New(cfg.LogLevel)
 
+	// First line out, before anything can fail on a value that came from
+	// the wrong place. Config.Load cannot log this itself — the log level
+	// is one of the things it is loading.
+	if cfg.EnvFileApplied > 0 {
+		log.Info("env file applied", "path", cfg.EnvFile, "variables", cfg.EnvFileApplied)
+	} else {
+		log.Debug("no env file applied; using the process environment only", "path", cfg.EnvFile)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -78,11 +87,36 @@ func main() {
 	if cfg.ChatEnabled() {
 		geminiClient = gemini.New(cfg.GeminiAPIKey, cfg.GeminiModel, httpjson.Hooks{OnAttempt: metrics.ObserveAdapterAttempt})
 		log.Info("ai chat enabled", "model", cfg.GeminiModel)
+	} else {
+		// Say so out loud. Chat being off is a legitimate configuration, but
+		// silence here is indistinguishable from a key that failed to arrive,
+		// and the user-visible symptom is identical either way.
+		log.Warn("ai chat disabled: GEMINI_API_KEY is not set", "env_file", cfg.EnvFile)
 	}
 
 	alertCfg := alertengine.DefaultConfig()
 	alertCfg.DaytimeStartHour = cfg.DaytimeStartHour
 	alertCfg.DaytimeEndMinutes = cfg.DaytimeEndHour*60 + 30
+
+	// Overlay the operator-editable policy from the database.
+	//
+	// Deliberately NOT fatal when it cannot be read. The compiled defaults are
+	// a sane, tested policy, and a fleet running on them is far better than a
+	// fleet not being collected at all because one settings row is missing —
+	// which is exactly the state a half-applied migration leaves. It is logged
+	// at WARN, and the admin UI reads from the same row, so the discrepancy is
+	// visible rather than silent.
+	alertSettingsRepo := storage.NewAlertSettingsRepo(db)
+	if stored, err := alertSettingsRepo.Load(ctx); err != nil {
+		log.Warn("could not load alert settings; running on compiled defaults", "error", err)
+	} else {
+		alertCfg = alertengine.ConfigFromSettings(stored, cfg.PollInterval, alertCfg)
+		log.Info("alert settings loaded",
+			"production_window_readings", alertCfg.ProductionDropWindow,
+			"battery_window_readings", alertCfg.BatteryWindow,
+			"poll_interval", cfg.PollInterval)
+	}
+
 	engine := alertengine.New(alertsRepo, siteMetrics, alertCfg).
 		WithNotifier(sseHub).
 		WithMetrics(metrics)
@@ -114,15 +148,17 @@ func main() {
 	authService := auth.NewService(users, refreshTokens, tokenIssuer, cfg.JWTRefreshTTL)
 
 	router := api.NewRouter(&api.Deps{
-		Cfg:         cfg,
-		DB:          db,
-		Sites:       sites,
-		SiteMetrics: siteMetrics,
-		Alerts:      alertsRepo,
-		Users:       users,
-		Audit:       auditRepo,
-		AuthService: authService,
-		TokenIssuer: tokenIssuer,
+		Cfg:           cfg,
+		DB:            db,
+		Sites:         sites,
+		SiteMetrics:   siteMetrics,
+		Alerts:        alertsRepo,
+		AlertSettings: alertSettingsRepo,
+		AlertEngine:   engine,
+		Users:         users,
+		Audit:         auditRepo,
+		AuthService:   authService,
+		TokenIssuer:   tokenIssuer,
 		LoginThrottle: auth.NewThrottle(auth.ThrottleConfig{
 			MaxFailures: cfg.LoginMaxFailures,
 			Window:      cfg.LoginWindow,

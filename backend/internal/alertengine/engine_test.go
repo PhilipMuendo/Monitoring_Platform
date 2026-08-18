@@ -93,7 +93,7 @@ func TestProductionDropSkipsWindowsWithUnreportedPower(t *testing.T) {
 
 	// nil repo again: reaching evaluateRule would panic, so returning nil
 	// proves the rule bailed out before deciding anything.
-	if err := engine.checkProductionDrop(t.Context(), "site-1", "Site One", reading, recent); err != nil {
+	if err := engine.checkProductionDrop(t.Context(), "site-1", "Site One", reading, recent, cfg); err != nil {
 		t.Fatalf("checkProductionDrop = %v, want nil (window skipped)", err)
 	}
 }
@@ -107,7 +107,7 @@ func TestBatteryRuleSkipsWindowsWithUnreportedSOC(t *testing.T) {
 		recent[i] = models.SiteData{Timestamp: time.Now()} // SOC left nil
 	}
 
-	if err := engine.checkBattery(t.Context(), "site-1", "Site One", recent); err != nil {
+	if err := engine.checkBattery(t.Context(), "site-1", "Site One", recent, cfg); err != nil {
 		t.Fatalf("checkBattery = %v, want nil (window skipped)", err)
 	}
 }
@@ -214,7 +214,7 @@ func TestProductionDropHoldsOvernightInsteadOfResolving(t *testing.T) {
 		recent[i] = models.SiteData{Timestamp: night, Power: &p}
 	}
 
-	if err := engine.checkProductionDrop(t.Context(), "site-1", "Site One", reading, recent); err != nil {
+	if err := engine.checkProductionDrop(t.Context(), "site-1", "Site One", reading, recent, cfg); err != nil {
 		t.Fatalf("checkProductionDrop at night = %v, want nil (held, not resolved)", err)
 	}
 }

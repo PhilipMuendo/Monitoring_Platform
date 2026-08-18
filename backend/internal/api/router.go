@@ -12,6 +12,7 @@ import (
 
 	"solar-monitor/internal/adapters"
 	"solar-monitor/internal/adapters/gemini"
+	"solar-monitor/internal/alertengine"
 	"solar-monitor/internal/auth"
 	"solar-monitor/internal/collector"
 	"solar-monitor/internal/config"
@@ -28,6 +29,10 @@ type Deps struct {
 	Sites         *storage.SiteRepo
 	SiteMetrics   *storage.MetricsRepo
 	Alerts        *storage.AlertRepo
+	AlertSettings *storage.AlertSettingsRepo
+	// AlertEngine is held so an admin editing thresholds can swap the live
+	// policy without a restart. Nil in tests that do not exercise that path.
+	AlertEngine   *alertengine.Engine
 	Users         *storage.UserRepo
 	Audit         *storage.AuditRepo
 	AuthService   *auth.Service
@@ -79,6 +84,8 @@ func NewRouter(d *Deps) http.Handler {
 
 			r.Get("/me", d.handleMe)
 			r.Get("/fleet/summary", d.handleFleetSummary)
+			// The wall display's day curve and the energy-vs-yesterday chip.
+			r.Get("/fleet/today", d.handleFleetToday)
 
 			r.Get("/sites", d.handleListSites)
 			r.Get("/sites/{id}", d.handleGetSite)
@@ -98,6 +105,9 @@ func NewRouter(d *Deps) http.Handler {
 				r.Post("/sites", d.handleCreateSite)
 				r.Patch("/sites/{id}", d.handleUpdateSite)
 				r.Delete("/sites/{id}", d.handleDeleteSite)
+				r.Get("/alert-settings", d.handleGetAlertSettings)
+				r.Put("/alert-settings", d.handleUpdateAlertSettings)
+
 				r.Get("/users", d.handleListUsers)
 				r.Post("/users", d.handleCreateUser)
 			})

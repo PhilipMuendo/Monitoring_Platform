@@ -59,6 +59,17 @@ services:
       INGECON_BASE_URL: ${INGECON_BASE_URL:-}
       SOSEN_USERNAME: ${SOSEN_USERNAME:-}
       SOSEN_PASSWORD: ${SOSEN_PASSWORD:-}
+      # AI chat. Left blank the endpoint returns 503 and the widget hides
+      # itself, so this never blocks a Compose bring-up.
+      #
+      # These are listed explicitly rather than via `env_file: ./backend/.env`
+      # on purpose. That directive would inject the WHOLE of backend/.env,
+      # including PORT=8081 (this machine's Apache owns 8080) — which is not
+      # overridden by the block above and would leave the container listening
+      # on a port nothing is mapped to. Compose reads the ROOT .env for these
+      # ${...} interpolations; backend/.env is for running the binary natively.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-latest}
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:3000}
 
   frontend:

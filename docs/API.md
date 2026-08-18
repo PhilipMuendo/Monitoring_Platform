@@ -18,10 +18,34 @@ Access tokens are short-lived JWTs (15 min default). Refresh tokens are opaque, 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/v1/fleet/summary` | any role | Aggregate KPI numbers powering the dashboard's KPI cards + power-flow viz |
+| GET | `/api/v1/fleet/today` | any role | The local day's fleet generation curve (15-min buckets) + energy vs the same time yesterday |
 | GET | `/api/v1/sites` | any role | All sites + latest status, **problem sites sorted first** (`?all=true` includes inactive) |
 | GET | `/api/v1/sites/{id}` | any role | Single site + latest status |
 | GET | `/api/v1/sites/{id}/history?range=24h\|7d\|30d` | any role | Power-curve points (raw 5-min for 24h, hourly rollups for 7d/30d) |
 | GET | `/api/v1/sites/{id}/alerts` | any role | Alert history for one site |
+
+### `/fleet/today`
+
+Powers the wall display's generation curve and its energy comparison.
+
+**The day is the day in Kenya (EAT, UTC+3), not UTC.** `energy_today_kwh` is a
+counter each inverter resets at ITS local midnight, so a UTC day boundary would
+— every evening between 21:00 and midnight Nairobi — sum two different days'
+counters and label the result "today".
+
+**`points[].power_w` is a sum of per-site averages, not a sum of readings.**
+Sites do not share a clock: one can land two readings in a 15-minute bucket
+while another lands none, so summing raw rows would count the busier site twice
+and draw a spike that never happened. Each site is averaged within a bucket
+first. A site with no reading in a bucket contributes **nothing, not zero** — a
+site we failed to poll has not generated 0 W, and drawing it as 0 would turn
+our own collection gap into an apparent fleet-wide dip.
+
+**Compare against `energy_yesterday_to_now_kwh`, not `energy_yesterday_total_kwh`.**
+The first is yesterday up to the same clock time and is the only fair baseline
+for a percentage; the second is the whole of yesterday and is context only.
+Comparing today-so-far against a full day reports a large negative every
+morning on a healthy fleet.
 
 ### Telemetry field conventions
 

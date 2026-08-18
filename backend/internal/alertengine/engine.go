@@ -8,6 +8,7 @@ package alertengine
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"solar-monitor/internal/models"
@@ -107,22 +108,34 @@ type noopRecorder struct{}
 func (noopRecorder) ObserveAlert(string, string) {}
 
 type Engine struct {
-	alerts   *storage.AlertRepo
-	metrics  *storage.MetricsRepo
-	cfg      Config
+	alerts  *storage.AlertRepo
+	metrics *storage.MetricsRepo
+	// cfg is swappable at runtime: an admin editing thresholds must take
+	// effect on the next collection cycle, not on the next deploy. Held
+	// behind an atomic pointer rather than a mutex because the read path is
+	// every rule of every site of every cycle and the write path is a human
+	// pressing Save.
+	cfg      atomic.Pointer[Config]
 	notifier Notifier
 	recorder AlertRecorder
 }
 
 func New(alerts *storage.AlertRepo, metrics *storage.MetricsRepo, cfg Config) *Engine {
-	return &Engine{
+	e := &Engine{
 		alerts:   alerts,
 		metrics:  metrics,
-		cfg:      cfg,
 		notifier: noopNotifier{},
 		recorder: noopRecorder{},
 	}
+	e.cfg.Store(&cfg)
+	return e
 }
+
+// SetConfig swaps the live alert policy. Safe to call while cycles are running.
+func (e *Engine) SetConfig(cfg Config) { e.cfg.Store(&cfg) }
+
+// Config returns the policy currently in force.
+func (e *Engine) Config() Config { return *e.cfg.Load() }
 
 // WithMetrics attaches an alert counter. Alert rate over time is the
 // signal that tells you a rule is too sensitive long before anyone files
@@ -234,36 +247,41 @@ func (e *Engine) Evaluate(ctx context.Context, siteID, siteName string, reading 
 	// battery one. Production drop now needs 6 readings against battery's 3;
 	// fetching battery+1 would have left checkProductionDrop permanently
 	// short of data and silently disabled it.
-	need := max(e.cfg.BatteryWindow, e.cfg.ProductionDropWindow)
+	// Snapshot the policy for the whole of this site's evaluation. Loading it
+	// per rule would let an admin's Save land between two rules and judge one
+	// site's reading against two different policies.
+	cfg := e.Config()
+
+	need := max(cfg.BatteryWindow, cfg.ProductionDropWindow)
 	recent, err := e.metrics.RecentReadings(ctx, siteID, need+1)
 	if err != nil {
 		return fmt.Errorf("alertengine: fetch recent readings: %w", err)
 	}
 
-	if err := e.checkOffline(ctx, siteID, siteName, reading); err != nil {
+	if err := e.checkOffline(ctx, siteID, siteName, reading, cfg); err != nil {
 		return err
 	}
-	if err := e.checkFault(ctx, siteID, siteName, reading); err != nil {
+	if err := e.checkFault(ctx, siteID, siteName, reading, cfg); err != nil {
 		return err
 	}
-	if err := e.checkProductionDrop(ctx, siteID, siteName, reading, recent); err != nil {
+	if err := e.checkProductionDrop(ctx, siteID, siteName, reading, recent, cfg); err != nil {
 		return err
 	}
-	if err := e.checkBattery(ctx, siteID, siteName, recent); err != nil {
+	if err := e.checkBattery(ctx, siteID, siteName, recent, cfg); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (e *Engine) checkOffline(ctx context.Context, siteID, siteName string, reading models.SiteData) error {
-	stale := time.Since(reading.Timestamp) >= e.cfg.OfflineThreshold
+func (e *Engine) checkOffline(ctx context.Context, siteID, siteName string, reading models.SiteData, cfg Config) error {
+	stale := time.Since(reading.Timestamp) >= cfg.OfflineThreshold
 	condition := reading.Status == models.StatusOffline || stale
 
-	message := fmt.Sprintf("%s has not reported data in over %d minutes", siteName, int(e.cfg.OfflineThreshold.Minutes()))
+	message := fmt.Sprintf("%s has not reported data in over %d minutes", siteName, int(cfg.OfflineThreshold.Minutes()))
 	// Clears as soon as the site reports again. No hysteresis band: "we
 	// received a reading" is unambiguous in a way that "output is low" is not.
 	return e.evaluateRule(ctx, siteID, models.AlertOffline, models.SeverityCritical,
-		firingWhen(condition), e.cfg.OfflineCooldown, message,
+		firingWhen(condition), cfg.OfflineCooldown, message,
 		map[string]any{"last_seen": reading.Timestamp})
 }
 
@@ -277,7 +295,7 @@ func firingWhen(condition bool) ruleState {
 	return ruleClear
 }
 
-func (e *Engine) checkFault(ctx context.Context, siteID, siteName string, reading models.SiteData) error {
+func (e *Engine) checkFault(ctx context.Context, siteID, siteName string, reading models.SiteData, cfg Config) error {
 	condition := reading.FaultCode != nil && *reading.FaultCode != 0
 	code := 0
 	if reading.FaultCode != nil {
@@ -287,11 +305,11 @@ func (e *Engine) checkFault(ctx context.Context, siteID, siteName string, readin
 	// Clears when the inverter stops reporting the fault, which is the
 	// inverter's own statement that the fault is gone.
 	return e.evaluateRule(ctx, siteID, models.AlertFault, models.SeverityCritical,
-		firingWhen(condition), e.cfg.FaultCooldown, message,
+		firingWhen(condition), cfg.FaultCooldown, message,
 		map[string]any{"fault_code": code})
 }
 
-func (e *Engine) checkProductionDrop(ctx context.Context, siteID, siteName string, reading models.SiteData, recent []models.SiteData) error {
+func (e *Engine) checkProductionDrop(ctx context.Context, siteID, siteName string, reading models.SiteData, recent []models.SiteData, cfg Config) error {
 	// HOLD outside judgeable daylight — do not clear.
 	//
 	// This used to resolve the alert every evening, which is the whole
@@ -300,10 +318,10 @@ func (e *Engine) checkProductionDrop(ctx context.Context, siteID, siteName strin
 	// site produced a fresh "incident" every morning. Holding means a site
 	// that is genuinely underproducing keeps ONE open alert across nights
 	// until it actually recovers.
-	if !isProductionJudgeable(reading.Timestamp, e.cfg) {
+	if !isProductionJudgeable(reading.Timestamp, cfg) {
 		return nil
 	}
-	if len(recent) < e.cfg.ProductionDropWindow {
+	if len(recent) < cfg.ProductionDropWindow {
 		return nil
 	}
 
@@ -311,24 +329,24 @@ func (e *Engine) checkProductionDrop(ctx context.Context, siteID, siteName strin
 	// power figure. A nil Power means the vendor didn't report the channel;
 	// counting that as "below threshold" would manufacture a production-drop
 	// alert out of missing data.
-	powers := make([]float64, 0, e.cfg.ProductionDropWindow)
-	for _, r := range recent[:e.cfg.ProductionDropWindow] {
+	powers := make([]float64, 0, cfg.ProductionDropWindow)
+	for _, r := range recent[:cfg.ProductionDropWindow] {
 		if r.Power == nil {
 			return nil
 		}
 		powers = append(powers, *r.Power)
 	}
-	state := windowState(powers, e.cfg.ProductionDropThresholdW, e.cfg.ProductionRecoverThresholdW)
+	state := windowState(powers, cfg.ProductionDropThresholdW, cfg.ProductionRecoverThresholdW)
 
 	message := fmt.Sprintf("%s production below %.0fW for %d consecutive readings during daylight",
-		siteName, e.cfg.ProductionDropThresholdW, e.cfg.ProductionDropWindow)
+		siteName, cfg.ProductionDropThresholdW, cfg.ProductionDropWindow)
 	return e.evaluateRule(ctx, siteID, models.AlertProductionDrop, models.SeverityWarning,
-		state, e.cfg.ProductionDropCooldown, message,
-		map[string]any{"power_w": reading.Power, "window": e.cfg.ProductionDropWindow})
+		state, cfg.ProductionDropCooldown, message,
+		map[string]any{"power_w": reading.Power, "window": cfg.ProductionDropWindow})
 }
 
-func (e *Engine) checkBattery(ctx context.Context, siteID, siteName string, recent []models.SiteData) error {
-	if len(recent) < e.cfg.BatteryWindow {
+func (e *Engine) checkBattery(ctx context.Context, siteID, siteName string, recent []models.SiteData, cfg Config) error {
+	if len(recent) < cfg.BatteryWindow {
 		return nil
 	}
 
@@ -338,9 +356,9 @@ func (e *Engine) checkBattery(ctx context.Context, siteID, siteName string, rece
 	// could never reach the threshold and silently disabled the rule.
 	// Same hysteresis band as production: a battery trickle-charging across
 	// 20% would otherwise raise and clear repeatedly on its way up.
-	socs := make([]float64, 0, e.cfg.BatteryWindow)
+	socs := make([]float64, 0, cfg.BatteryWindow)
 	var lastSOC float64
-	for i, r := range recent[:e.cfg.BatteryWindow] {
+	for i, r := range recent[:cfg.BatteryWindow] {
 		if r.SOC == nil {
 			return nil
 		}
@@ -349,13 +367,13 @@ func (e *Engine) checkBattery(ctx context.Context, siteID, siteName string, rece
 		}
 		socs = append(socs, *r.SOC)
 	}
-	state := windowState(socs, e.cfg.BatterySOCThresholdPct, e.cfg.BatterySOCRecoverPct)
+	state := windowState(socs, cfg.BatterySOCThresholdPct, cfg.BatterySOCRecoverPct)
 
 	message := fmt.Sprintf("%s battery SOC below %.0f%% for %d consecutive readings",
-		siteName, e.cfg.BatterySOCThresholdPct, e.cfg.BatteryWindow)
+		siteName, cfg.BatterySOCThresholdPct, cfg.BatteryWindow)
 	return e.evaluateRule(ctx, siteID, models.AlertBatteryIssue, models.SeverityWarning,
-		state, e.cfg.BatteryCooldown, message,
-		map[string]any{"soc": lastSOC, "window": e.cfg.BatteryWindow})
+		state, cfg.BatteryCooldown, message,
+		map[string]any{"soc": lastSOC, "window": cfg.BatteryWindow})
 }
 
 // evaluateRule is the shared state machine every rule above drives:
