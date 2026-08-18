@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BrandBadge } from "@/components/brand-badge";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { StatusBadge } from "@/components/status-badge";
-import { SitePowerFlow } from "@/components/site/site-power-flow";
+import { SitePowerFlowView } from "@/components/site/site-power-flow-view";
 
 // Recharts is 357 KB — the single largest dependency on this route, bigger
 // than everything else the page needs put together. Imported statically it sat
@@ -33,6 +33,7 @@ const SiteHistoryCharts = dynamic(
   { ssr: false, loading: () => <Skeleton className="h-[300px] w-full" /> },
 );
 import { SiteAlertsList } from "@/components/site/site-alerts-list";
+import { usePowerFlowViewMode } from "@/hooks/use-power-flow-view-mode";
 import { useSiteHistory } from "@/hooks/use-site-history";
 import { useSite } from "@/hooks/use-sites";
 import { formatCapacity, formatEnergy, formatPercent, formatPower, formatRelativeTime } from "@/lib/format";
@@ -43,6 +44,10 @@ type Range = "24h" | "7d" | "30d";
 export default function SiteDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [range, setRange] = useState<Range>("24h");
+  // The same stored 2D/3D preference the dashboard and wall use. Read-only
+  // here: one toggle for the whole app is less confusing than a per-page one,
+  // and it means someone who chose 2D once is not asked again on every site.
+  const { mode } = usePowerFlowViewMode();
 
   const { data: site, isLoading: siteLoading, isError } = useSite(id);
   const { data: history, isLoading: historyLoading } = useSiteHistory(id, range);
@@ -124,15 +129,30 @@ export default function SiteDetailPage() {
         />
       </div>
 
-      {/* 2D, not the fleet view's 3D scene: that house is a single aggregate
-          illustration of the whole fleet, and a WebGL scene per site would
-          cost far more than it explains. */}
+      {/* The 3D scene, driven by THIS site's telemetry.
+
+          This card used to read "a WebGL scene per site would cost far more
+          than it explains", and that was true when it was written: the scene
+          was a 1.3 MB chunk plus a 4 MB car model whose download did not begin
+          until after an auth round trip. Three changes retired the objection —
+          the model was removed (the scene is fully procedural), the
+          ambient-occlusion pass was split into its own chunk, and the warm-up
+          moved above the auth gate.
+
+          What settles it is that the cost does not scale with site count. The
+          scene is one lazily-loaded chunk, resolved once per session and
+          shared by every route, so this page adds ZERO download on top of the
+          dashboard. What is left per visit is a WebGL context and a shader
+          compile, and the 2D diagram holds the panel through it.
+
+          Falls back to 2D below 768px and on devices without WebGL — see
+          site-power-flow-view.tsx. */}
       <Card>
         <CardHeader>
           <CardTitle>Power Flow</CardTitle>
         </CardHeader>
         <CardContent>
-          <SitePowerFlow site={site} className="h-[320px]" />
+          <SitePowerFlowView site={site} mode={mode} className="h-[320px] sm:h-[380px] xl:h-[440px]" />
         </CardContent>
       </Card>
 

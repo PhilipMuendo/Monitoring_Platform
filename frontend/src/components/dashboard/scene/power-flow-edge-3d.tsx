@@ -4,8 +4,6 @@ import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
-import { STUDIO_INK } from "@/lib/power-flow-colors";
-
 export type Waypoint = readonly [number, number, number];
 
 interface PowerFlowEdge3DProps {
@@ -18,6 +16,14 @@ interface PowerFlowEdge3DProps {
   speed: number;
   particleCount: number;
   color: string;
+  /**
+   * The trunking's own colour, from SCENE_LIGHTING's `ink.conduit`.
+   *
+   * Phase-dependent rather than a constant: the daylight grey sits a few steps
+   * from the night facade it is mounted on, and four invisible runs is the
+   * whole diagram gone.
+   */
+  conduitColor: string;
 }
 
 // A conduit run with small chevron arrows travelling along it.
@@ -84,7 +90,7 @@ function roundedPolyline(points: readonly Waypoint[], radius: number): THREE.Cur
 
 const CORNER_RADIUS = 0.07;
 
-export function PowerFlowEdge3D({ points, active, reverse, speed, particleCount, color }: PowerFlowEdge3DProps) {
+export function PowerFlowEdge3D({ points, active, reverse, speed, particleCount, color, conduitColor }: PowerFlowEdge3DProps) {
   // Chevrons follow the run in the direction power actually flows, so the
   // travel path is simply the route read backwards when reversed.
   const curve = useMemo(
@@ -118,7 +124,7 @@ export function PowerFlowEdge3D({ points, active, reverse, speed, particleCount,
           that carries meaning: nothing is flowing on this leg. */}
       <mesh geometry={tube} castShadow>
         <meshStandardMaterial
-          color={STUDIO_INK.conduit}
+          color={conduitColor}
           roughness={0.65}
           metalness={0.1}
           transparent

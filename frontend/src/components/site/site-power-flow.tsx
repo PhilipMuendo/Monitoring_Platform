@@ -11,14 +11,19 @@ import type { SiteWithStatus } from "@/lib/types";
 /**
  * One site's power flow, in 2D.
  *
- * 2D rather than the fleet view's 3D scene deliberately: the 3D house is a
- * single aggregate illustration of the whole fleet, and rendering a WebGL scene
- * per site would cost far more than it explains — a site page wants its own
- * numbers, not a second copy of the same building.
+ * No longer the only option on a site page: SitePowerFlowView now offers the
+ * same 3D scene the fleet overview uses, driven by this site's telemetry. This
+ * diagram is what that view falls back to — while the scene's chunk loads, on
+ * screens under 768px where the scene's callouts collide with the building,
+ * and permanently on devices with no WebGL. It is the floor, not the ceiling,
+ * so it must stay complete on its own.
  *
- * Every direction here comes from lib/power-flow-model, so this diagram cannot
- * claim power is flowing into the array or out of the house load. Anything the
- * inverter did not report shows as "—" and an inactive leg rather than a zero.
+ * Every direction here comes from lib/power-flow-model — the same functions
+ * sitePowerFlowScene feeds the 3D renderer, which is what stops the two views
+ * disagreeing about which way power is moving for the same site. This diagram
+ * cannot claim power is flowing into the array or out of the house load.
+ * Anything the inverter did not report shows as "—" and an inactive leg rather
+ * than a zero.
  */
 export function SitePowerFlow({ site, className }: { site: SiteWithStatus; className?: string }) {
   const solar = solarLeg(site.power_w);

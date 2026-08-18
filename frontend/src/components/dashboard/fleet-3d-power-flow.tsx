@@ -2,18 +2,15 @@
 
 import { ContactShadows, Environment, Lightformer, PerformanceMonitor } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
-import { EffectComposer, N8AO } from "@react-three/postprocessing";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { NeutralToneMapping, type OrthographicCamera as ThreeOrthographicCamera } from "three";
 
 import { BatteryPack, BATTERY_ANCHOR } from "@/components/dashboard/scene/battery-pack";
-import { Car } from "@/components/dashboard/scene/car";
-import { GltfModel } from "@/components/dashboard/scene/gltf-model";
-import { GradientBackdrop, ShadowFloor } from "@/components/dashboard/scene/ground";
+import { Compound } from "@/components/dashboard/scene/compound";
+import { GradientBackdrop, NightSky, ShadowFloor } from "@/components/dashboard/scene/ground";
 import { MODEL_CREDITS } from "@/components/dashboard/scene/model-credits";
 import { GridPylon, PYLON_ANCHOR } from "@/components/dashboard/scene/grid-pylon";
 import {
-  CARPORT_POSITION,
   GRID_DROP_X,
   House,
   HOUSE_HUB_ANCHOR,
@@ -21,62 +18,71 @@ import {
   HUB_LEFT_X,
   HUB_RIGHT_X,
   HUB_TOP_Y,
+  FACADE_Z,
   ROOF_FRONT_Z,
-  ROOF_TOP_Y,
+  SIDE_X,
+  STOREY_LINE_Y,
   SOLAR_DROP_X,
   SOLAR_PANEL_ANCHOR,
 } from "@/components/dashboard/scene/house";
 import { PowerFlowCallout3D } from "@/components/dashboard/scene/power-flow-callout-3d";
 import { PowerFlowEdge3D } from "@/components/dashboard/scene/power-flow-edge-3d";
 import { useRenderActive } from "@/hooks/use-render-active";
+import { useTimeOfDay } from "@/hooks/use-time-of-day";
 import { useWebGLTier } from "@/hooks/use-webgl-support";
 import { formatPercent, formatPower } from "@/lib/format";
-import { POWER_FLOW_COLORS, STUDIO, STUDIO_INK } from "@/lib/power-flow-colors";
-import { batteryLeg, gridLeg, loadLeg, solarLeg } from "@/lib/power-flow-model";
+import { SCENE_LIGHTING, type SceneLighting } from "@/lib/power-flow-colors";
+import {
+  CAMERA_POSITION,
+  CAMERA_TARGET,
+  CAMERA_ZOOM,
+  REFERENCE_HEIGHT,
+  fitZoom,
+} from "@/lib/scene-camera";
+import type { PowerFlowScene } from "@/lib/power-flow-model";
 import { scalePowerFlowSpeed } from "@/lib/power-flow-scale";
 import { cn } from "@/lib/utils";
-import type { FleetSummary } from "@/lib/types";
 
-const CAMERA_POSITION: [number, number, number] = [7.6, 5.2, 8.2];
-const CAMERA_TARGET: [number, number, number] = [0.35, 1.25, 0];
-// Starting zoom only — ResponsiveCamera recomputes this from the canvas
-// dimensions on mount and on every resize.
-const CAMERA_ZOOM = 62;
-/** Canvas height the fixed camera framing was tuned against (the dashboard panel). */
-const REFERENCE_HEIGHT = 380;
+// Split out of this chunk on purpose — `postprocessing` is a large library
+// that only the "full" WebGL2 tier can use, and bundling it here made every
+// WebGL1 device (the wall display's TV among them) pay for it. See
+// scene/ambient-occlusion.tsx for the full reasoning.
+const AmbientOcclusion = lazy(() =>
+  import("@/components/dashboard/scene/ambient-occlusion").then((m) => ({
+    default: m.AmbientOcclusion,
+  })),
+);
 
-// Orthographic zoom is pixels-per-world-unit, so it has to scale with the
-// canvas: at a fixed zoom a bigger panel just adds empty margin around a
-// same-sized house, which is the opposite of the "make the 3D view bigger"
-// ask. Fitted against BOTH axes and min'd, because the old height-only law
-// was safe only while the panel stayed wider than it was tall — on a narrow
-// one it ran the pylon and battery off the left and right edges, which are
-// exactly the things the Grid and Battery callouts point at.
+// THE SCENE DOWNLOADS NO ASSETS. Everything below is procedural geometry
+// built at mount, so once this chunk has arrived there is nothing else on the
+// wire — no models, and no Draco decoder either.
 //
-// Vertical: unchanged. 380 px x 0.163 reproduces the zoom of 62 the original
-// framing was hand-tuned to, so a panel of the old height frames as before.
-const ZOOM_PER_PX_HEIGHT = 0.163;
-// Horizontal: derived, not guessed. Projecting the scene's world bounding box
-// (car at x=-3.55 through pylon at x=+2.9, roof at y=3.1) through this exact
-// camera gives an on-screen extent of 8.50 world units, so 1 / (8.50 x 1.04
-// margin) is the zoom at which the scene exactly spans the panel width. An
-// earlier guess of 0.105 left the view width-bound at every realistic size,
-// which threw the taller panel away entirely — the scene came out *smaller*
-// than before despite the card growing.
-// Re-derived after the car moved into the undercroft. That single change
-// collapsed the projected scene from 8.22 x 5.67 world units to 6.79 x 5.16 —
-// the car had been sitting forward AND to the left of everything else, so it
-// was setting both the width and the depth the camera had to cover. Fitting a
-// smaller box means a larger zoom, which is why the building ends up roughly
-// 2.4x its original on-screen size for no change in panel size at all.
-const ZOOM_PER_PX_WIDTH = 0.1417;
-const ZOOM_MIN = 30;
-const ZOOM_MAX = 170;
+// It used to ship a 4 MB car.glb which, with its ~750 KB decoder, was more
+// than three times the size of this entire chunk. It was removed for four
+// reasons, of which bandwidth was only the first: it also cost a main-thread
+// Draco decode of ~162k vertices for something that renders about 40px wide;
+// it carried a CC BY 4.0 attribution obligation that had to be printed on the
+// panel; and — the one that settled it — its red paint was the most saturated
+// thing in the render, louder than any of the four semantic flow colours, so
+// the eye went to a parked car instead of to the power flow. The undercroft
+// still reads as a carport because scene/compound.tsx puts a paved apron in
+// front of it.
+//
+// The loader scaffolding (scene/gltf-model.tsx, public/decoders/draco/) is
+// kept for the next asset that needs it. It costs nothing while unused: no
+// module imports it, so it is tree-shaken out of this chunk entirely, and the
+// decoders are static files nothing requests.
 
-// Always render in the bright studio palette — the reference is a clean,
-// well-lit architectural render regardless of app theme, and the user
-// wants it light. Only the semantic accent colors come from the tokens.
-const ACCENTS = POWER_FLOW_COLORS.light;
+// THE SCENE DOES NOT FOLLOW THE APP THEME. It never has — the render is a
+// clean, well-lit architectural view whether or not the dashboard around it is
+// dark. What it follows now is the CLOCK IN KENYA: day, dusk or night at the
+// installations, from lib/time-of-day.ts.
+//
+// Those are two different axes and it matters that they stay separate. The
+// app theme is a preference about the UI; the phase is a fact about the sites.
+// A night scene inside a light-themed dashboard is correct, and so is the
+// reverse. See SCENE_LIGHTING in lib/power-flow-colors.ts for what each phase
+// changes — almost entirely lighting, because that is what time of day is.
 
 // ---------------------------------------------------------------------------
 // Conduit routing
@@ -109,19 +115,30 @@ const ACCENTS = POWER_FLOW_COLORS.light;
 // ROOF_FRONT_Z. Each service gets its own shallow plane proud of the wall:
 // solar and grid must also clear the eaves, since both drop past them.
 const Z_SOLAR = ROOF_FRONT_Z + 0.035;
-const Z_GRID = ROOF_FRONT_Z + 0.075;
+// The grid no longer comes over the roof, so it no longer has to clear the
+// eaves — it sits proud of the FACADE instead, which is 0.08 shallower. Deep
+// enough to stand clear of the shadow-line reveal at the storey line (whose
+// front face is at FACADE_Z + 0.015) without floating off the wall.
+const Z_GRID = FACADE_Z + 0.075;
+/** The grid's plane on the right END wall, mirroring Z_GRID's offset off the front. */
+const X_GRID_SIDE = SIDE_X + 0.05;
+/**
+ * Where the service drop lands on the side wall, and the level it lands at.
+ *
+ * Kept BEHIND the front plane (negative Z) on purpose — that is the whole
+ * point of the side route, see GRID_ROUTE. Set at the upper storey rather than
+ * at the storey line so the span from the tower stays a shallow ~30° descent
+ * instead of the ~50° plunge it becomes if the cable has to reach all the way
+ * down to the slab in one go.
+ */
+const SIDE_LANDING_Z = -0.55;
+const SIDE_LANDING_Y = 2.15;
 const Z_BATTERY = 1.09;
 const Z_LOAD = 1.05;
 /** Where a run meets the inverter box (0.22 x 0.32, centred on the hub). */
 const HUB_FACE_Z = 1.1;
 /** Hub centre height — the level the two side entries come in at. */
 const HUB_Y = HOUSE_HUB_ANCHOR[1];
-
-// The strip of flat roof deck in front of the array that the grid run lies
-// along. Now that the roof is flat these are two plain numbers rather than a
-// point projected through a pitch rotation.
-const ROOF_RUN_Y = ROOF_TOP_Y + 0.03;
-const ROOF_RUN_Z = 0.92;
 
 // Off the panels, forward over the eaves, straight down into the top of the
 // inverter. Three waypoints and a single bend — the solar leg is now the
@@ -142,29 +159,63 @@ const BATTERY_ROUTE = [
   [HUB_LEFT_X, HUB_Y, HUB_FACE_Z],
 ] as const;
 
-// Overhead service drop from the pylon, landing on the ROOF and running along
-// it, then over the eaves and down the wall into the inverter's right face.
+// Overhead service drop from the pylon, landing at the building's front-right
+// corner and running left along the STOREY LINE — the floor line between the
+// ground and first storeys — into the inverter's right face.
 //
-// Lying on the roof is the point. Carried on the facade plane it was a long
-// line suspended in front of the building, crossing the whole composition with
-// nothing behind it. On the roof it is visually attached to a surface and
-// stops competing with the building.
+// It used to lie along the roof, which solved the right problem the wrong way.
+// The problem was that carried on the facade at an arbitrary height it was a
+// long line suspended in front of the building with nothing behind it; the
+// roof at least gave it a surface. But the roof is the top edge of the
+// composition, so the run drew a second horizontal line above the building
+// and then had to climb back down the full storey height to reach the
+// inverter — a long detour past everything.
+//
+// The storey line is a real surface too, and a better one: see STOREY_LINE_Y
+// in scene/house.tsx for why it is continuous across both wings (reveal band
+// on the closed wing, exposed slab edge across the cutaway) and why it is the
+// one horizontal band on the facade that crosses no glazing. The run is now
+// attached for its whole length, sits in the middle of the elevation instead
+// of on top of it, and arrives at the inverter from one storey up rather than
+// three.
+//
+// IT COMES DOWN THE SIDE, NOT ACROSS THE FRONT. This is the constraint the
+// route exists to satisfy and it is easy to lose.
+//
+// The pylon stands BEHIND the building (z = -1.25) and the inverter is on the
+// FRONT facade. An earlier version landed the span directly on the front plane
+// at z = +1.10, which meant the cable had to get from behind the house to in
+// front of it in one free span — and the only path is straight across the open
+// cutaway. The result was a long diagonal drawn right through the bedroom: the
+// single most obtrusive line in the render, crossing the one part of the scene
+// that is supposed to be showing furniture.
+//
+// So the cable now lands on the right END wall, at a z that is still behind
+// the front plane, and every point of the span stays right of x = 1.7. It
+// therefore cannot cross the building's volume at all. From the bracket it
+// runs down the side wall, forward along it to the front-right corner, and
+// only then turns onto the facade — where it picks up the storey line as
+// before.
 //
 // The first leg is the only one in the scene that moves on all three axes, and
 // that is correct rather than sloppy: it is a free span between a tower and a
 // building, which is exactly what an overhead service drop is. Every leg after
-// it, once the cable is fixed to the structure, is orthogonal — and the tower
-// is now tall enough (see grid-pylon.tsx) that the span descends the whole
-// way instead of climbing up to the roof it feeds.
+// it, once the cable is fixed to the structure, is orthogonal.
 //
-// The head sits at x = 1.72, a whisker proud of the right wall at 1.7. It was
-// briefly at 2.1 — beyond the building entirely — which put the corner where
-// the span "lands" in open air with nothing to land on.
+// The side legs sit 0.05 proud of the end wall, mirroring the 0.075 the facade
+// legs stand off the front, so the run keeps a constant apparent gap from the
+// building as it turns the corner.
 const GRID_ROUTE = [
   PYLON_ANCHOR,
-  [1.72, ROOF_RUN_Y, ROOF_RUN_Z],
-  [GRID_DROP_X, ROOF_RUN_Y, ROOF_RUN_Z],
-  [GRID_DROP_X, ROOF_RUN_Y, Z_GRID],
+  // Bracket on the side wall, upper storey, behind the front plane.
+  [X_GRID_SIDE, SIDE_LANDING_Y, SIDE_LANDING_Z],
+  // Down the side wall to the storey line.
+  [X_GRID_SIDE, STOREY_LINE_Y, SIDE_LANDING_Z],
+  // Forward along the side to the front-right corner.
+  [X_GRID_SIDE, STOREY_LINE_Y, Z_GRID],
+  // Round the corner and along the storey line to the service bay.
+  [GRID_DROP_X, STOREY_LINE_Y, Z_GRID],
+  // Down to inverter height, then in to its right face.
   [GRID_DROP_X, HUB_Y, Z_GRID],
   [HUB_RIGHT_X, HUB_Y, HUB_FACE_Z],
 ] as const;
@@ -197,11 +248,11 @@ function ResponsiveCamera() {
     const cam = camera as ThreeOrthographicCamera;
 
     // Zoom tracks the canvas so the scene grows with the panel instead of
-    // sitting at a fixed size inside it. Bound by whichever axis is tighter
-    // so the house can never overflow horizontally — see the constants above.
-    const fitted = Math.min(height * ZOOM_PER_PX_HEIGHT, width * ZOOM_PER_PX_WIDTH);
+    // sitting at a fixed size inside it. Bound by whichever axis is tighter so
+    // the house can never overflow horizontally — see lib/scene-camera.ts,
+    // which the backdrop reads too so the sky and the frame cannot disagree.
     // eslint-disable-next-line react-hooks/immutability
-    cam.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fitted));
+    cam.zoom = fitZoom(width, height);
 
     // Raising the look-at target pushes the scene down the screen. Below the
     // reference height the callouts need more headroom than shrinking alone
@@ -217,33 +268,57 @@ function ResponsiveCamera() {
 // A procedural studio environment (baked once) gives glass and solar
 // panels something to reflect and adds soft image-based fill light —
 // no external HDR asset required.
-function StudioEnvironment() {
+//
+// Scaled by the phase rather than rebuilt for it. Every intensity is one
+// multiplier off the daylight rig, so night dims the reflections instead of
+// recolouring them: what the glass and the solar array reflect at 3am is a
+// dark sky, which is a much weaker version of the same thing, not a different
+// thing. `frames={1}` still bakes it once — the key is that `scale` changes
+// the KEY of the Environment component, remounting it, so the bake is redone
+// when the phase changes and only then.
+function StudioEnvironment({ scale }: { scale: number }) {
   return (
-    <Environment resolution={256} frames={1} background={false}>
-      <Lightformer intensity={3} position={[0, 5, -3]} scale={[12, 8, 1]} color="#ffffff" />
-      <Lightformer intensity={1.4} position={[5, 3, 4]} scale={[6, 6, 1]} color="#eaf1f8" />
-      <Lightformer intensity={1} position={[-6, 2, 2]} scale={[6, 6, 1]} color="#f3f6fa" />
+    <Environment key={scale} resolution={256} frames={1} background={false}>
+      <Lightformer intensity={3 * scale} position={[0, 5, -3]} scale={[12, 8, 1]} color="#ffffff" />
+      <Lightformer intensity={1.4 * scale} position={[5, 3, 4]} scale={[6, 6, 1]} color="#eaf1f8" />
+      <Lightformer intensity={1 * scale} position={[-6, 2, 2]} scale={[6, 6, 1]} color="#f3f6fa" />
     </Environment>
   );
 }
 
-export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary; className?: string }) {
-  // Same direction/null semantics as the 2D view — see lib/power-flow-model.
-  // Sharing them is what stops the two views disagreeing about which way power
-  // is going for the same summary.
-  const solar = solarLeg(summary.total_power_w);
-  const load = loadLeg(summary.total_load_w);
-  const grid = gridLeg(summary.total_grid_w);
-  const battery = batteryLeg(summary.total_battery_w);
+/**
+ * The installation, in 3D.
+ *
+ * Takes a PowerFlowScene, NOT a FleetSummary — that is what lets the same
+ * renderer serve the fleet overview and a single site page without a fork. See
+ * lib/power-flow-model.ts for the input and for the direction rules, which are
+ * shared with both 2D diagrams so no two surfaces can disagree about which way
+ * power is moving.
+ *
+ * (The file is still called fleet-3d-power-flow.tsx. The name is historical
+ * and deliberately not changed: it is the dynamic-import specifier, written
+ * out literally in TWO places that must stay in step — see the note in
+ * fleet-power-flow-view.tsx — and it is referenced by a dozen comments across
+ * scene/. Renaming buys accuracy in one place and churn in fourteen.)
+ */
+export function PowerFlowScene3D({ scene, className }: { scene: PowerFlowScene; className?: string }) {
+  const { solar, load, grid, battery, soc, caption } = scene;
 
-  const solarW = summary.total_power_w;
-  const loadW = summary.total_load_w;
-  const gridW = summary.total_grid_w;
+  // Nullable throughout: a site that does not report a channel must render an
+  // absent leg, not a zero one. formatPower renders null as an em dash.
+  const solarW = solar.valueW;
+  const loadW = load.valueW;
+  const gridW = grid.valueW;
   const batteryW = battery.valueW ?? 0;
-  const maxWatts = Math.max(solarW, loadW, Math.abs(gridW), Math.abs(batteryW), 1000);
+  const maxWatts = Math.max(solarW ?? 0, loadW ?? 0, Math.abs(gridW ?? 0), Math.abs(batteryW), 1000);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const renderActive = useRenderActive(containerRef);
+
+  // Day, dusk or night at the installations — see the note above ACCENTS.
+  const phase = useTimeOfDay();
+  const lighting: SceneLighting = SCENE_LIGHTING[phase];
+  const ACCENTS = lighting.accents;
 
   // Ambient occlusion is the single biggest "solid object" cue and the main
   // thing separating this from the reference render — but it is also the most
@@ -258,33 +333,42 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
 
   return (
     <div ref={containerRef} className={cn("relative w-full", className)}>
-      {/* Fleet count as a low-profile corner overlay rather than a badge over
-          the house. Inked against the studio background, not the app theme —
-          `text-foreground` here rendered white-on-white in dark mode. */}
-      {/* Bottom left, not top left. The callouts all resolve onto a shared
+      {/* Optional corner caption — the fleet's "13/20 sites online". Null on a
+          site page, whose name and status are already in the page header.
+          Inked against the studio background, not the app theme:
+          `text-foreground` here rendered white-on-white in dark mode.
+
+          Bottom left, not top left. The callouts all resolve onto a shared
           baseline near the top of the panel, and once the battery moved into
           the undercroft its label landed straight on top of this counter —
           two unrelated numbers overprinting each other. The bottom-left
           corner is the only one still free; the model credit holds the
           bottom right. */}
-      <div className="pointer-events-none absolute bottom-3 left-3 z-10">
-        <div className="font-mono text-lg font-semibold tabular-nums" style={{ color: STUDIO_INK.strong }}>
-          {summary.online_sites}
-          <span style={{ color: STUDIO_INK.muted }}>/{summary.total_sites}</span>
+      {caption && (
+        <div className="pointer-events-none absolute bottom-3 left-3 z-10">
+          <div className="font-mono text-lg font-semibold tabular-nums" style={{ color: lighting.ink.strong }}>
+            {caption.value}
+            {caption.muted && <span style={{ color: lighting.ink.muted }}>{caption.muted}</span>}
+          </div>
+          <div className="text-[10px] uppercase tracking-wide" style={{ color: lighting.ink.muted }}>
+            {caption.label}
+          </div>
         </div>
-        <div className="text-[10px] uppercase tracking-wide" style={{ color: STUDIO_INK.muted }}>
-          sites online
-        </div>
-      </div>
+      )}
 
-      {/* CC BY attribution for the bundled car model. Small and muted, but
-          deliberately on the render itself rather than tucked away in an
-          about page: the licence requires credit wherever the work appears,
-          and this is where it appears. Removing this without also removing
-          public/models/car.glb puts the deployment in breach. */}
+      {/* Attribution for any bundled model that requires it. MODEL_CREDITS is
+          empty today — the scene is entirely procedural — so this renders
+          nothing at all.
+
+          It is deliberately left wired up rather than deleted. The licence
+          rule it enforces is that credit must appear wherever the work
+          appears, and the failure mode is someone dropping a CC BY asset into
+          public/models later and shipping it uncredited. With this here,
+          adding the entry to model-credits.ts is all that is needed and the
+          credit reappears on the render by itself. */}
       <div
         className="pointer-events-none absolute bottom-1.5 right-2 z-10 text-[9px] leading-tight"
-        style={{ color: STUDIO_INK.muted, opacity: 0.75 }}
+        style={{ color: lighting.ink.muted, opacity: 0.75 }}
       >
         {MODEL_CREDITS.map((credit) => (
           <div key={credit.file}>
@@ -313,21 +397,37 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
         frameloop={renderActive ? "always" : "never"}
       >
         <ResponsiveCamera />
-        <color attach="background" args={[STUDIO.background]} />
-        <GradientBackdrop />
+        <color attach="background" args={[lighting.background]} />
+        <GradientBackdrop lighting={lighting} />
+        {/* Mounted only at night, unlike the security lighting, which stays in
+            the scene unlit. A lamp post is part of the site whether or not it
+            is switched on; stars are not there in daylight at all. */}
+        {lighting.stars && <NightSky />}
 
-        {/* Bright studio lighting. The key light is deliberately weaker than
-            it was and its shadow much softer: the old rig threw long, hard,
-            dark shadows (the carport cast a grey trapezoid over the whole
-            lower-right quadrant) which is the opposite of how an
-            architectural render grounds a building. Ambient and hemisphere
-            carry more of the load now, and the ContactShadows pass below
-            does the grounding. */}
-        <ambientLight intensity={0.72} />
-        <hemisphereLight color="#ffffff" groundColor="#dfe4ec" intensity={0.62} />
+        {/* The rig. Every value comes from SCENE_LIGHTING for the current
+            phase — see that table for the reasoning behind each set.
+
+            The daylight key is deliberately weak and its shadow very soft: the
+            original rig threw long, hard, dark shadows (the carport cast a
+            grey trapezoid over the whole lower-right quadrant), which is the
+            opposite of how an architectural render grounds a building. Ambient
+            and hemisphere carry more of the load, and the ContactShadows pass
+            below does the grounding.
+
+            The shadow CAMERA and the softness are phase-independent on
+            purpose. They describe the quality of the shadow map, not the
+            weather, and re-tuning them per phase would mean three sets of
+            bias values to keep free of acne rather than one. */}
+        <ambientLight intensity={lighting.ambientIntensity} color={lighting.ambientColor} />
+        <hemisphereLight
+          color={lighting.hemisphereSky}
+          groundColor={lighting.hemisphereGround}
+          intensity={lighting.hemisphereIntensity}
+        />
         <directionalLight
-          position={[-5.5, 9, 5]}
-          intensity={0.95}
+          position={lighting.keyPosition}
+          intensity={lighting.keyIntensity}
+          color={lighting.keyColor}
           castShadow
           shadow-mapSize={[2048, 2048]}
           shadow-radius={14}
@@ -337,7 +437,7 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
           <orthographicCamera attach="shadow-camera" args={[-9, 9, 9, -9, 0.1, 30]} />
         </directionalLight>
 
-        <StudioEnvironment />
+        <StudioEnvironment scale={lighting.environmentIntensity} />
 
         {/* Faint directional cast shadow for direction, plus real contact
             occlusion for grounding.
@@ -354,51 +454,55 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
             frames={1} bakes it once instead of every frame. The building
             never moves, so re-rendering that pass 60x a second is pure cost —
             which matters on the wall display's TV browser. */}
-        <ShadowFloor opacity={0.1} />
+        {/* Both were tuned against a near-white floor, and the compound put a
+            mid-green one under them. Left alone the building sat in a heavy
+            blue-grey bruise: a shadow that reads as soft on #eef1f5 reads as
+            mud on grass, because it is darkening a surface that already
+            carries much more of the value range. Opacity comes down and the
+            colour loses its blue — a shadow on a green surface is not a cool
+            grey. ShadowFloor keeps its own opacity: it only shows out in the
+            faded region where the ground really is still near-white. */}
+        <ShadowFloor opacity={lighting.shadowFloorOpacity} />
+        {/* Lifted clear of the paving. The slabs top out at 0.022 and this
+            plane has to stay above everything it darkens, or the drive and
+            apron punch through their own contact shadow. */}
         <ContactShadows
-          position={[0, 0.006, 0]}
+          position={[0, 0.026, 0]}
+          // Covers +/- scale/2, which reaches every caster: the pylon at
+          // x = 2.7 and the lamp post at x = -3.6. Was briefly 16 to take in a
+          // tree at x = 6.3, at the cost of spreading the same 1024 map over a
+          // 50% wider area; with the trees gone that resolution goes back into
+          // the building, which is the only thing whose contact edge is close
+          // enough to the camera to read.
           scale={13}
           far={3.6}
           blur={2.4}
-          opacity={0.52}
+          opacity={lighting.contactShadowOpacity}
           resolution={1024}
           frames={1}
-          color="#28303c"
+          color={lighting.contactShadowColor}
         />
+
+        {/* The site the house stands in — lawn, drive and planting. Rendered
+            before the building so its opaque paving is laid down first; see
+            the long note in scene/compound.tsx for why the lawn is a finite
+            plot that fades out rather than a ground plane. */}
+        {/* Security lighting needs BOTH conditions, and the second one was
+            missing: it was driven by the clock alone, so at night a site
+            reporting zero load still lit its compound. A security lamp is a
+            load. If the house is drawing nothing, the lamps are not on either,
+            and showing them lit contradicts the very reading the scene exists
+            to display — the same lie as drawing an unreported channel as zero.
+
+            Time of day still gates it, because a lamp that is off in daylight
+            is off for a reason that has nothing to do with the inverter. */}
+        <Compound securityLights={lighting.securityLights && load.active} />
 
         {/* The living-room television is lit whenever the fleet draws load,
             using the same threshold as the Load flow edge so the screen and
             the animated conduit can never disagree. */}
         <House loadActive={load.active} />
-        <BatteryPack accentColor={ACCENTS.battery} soc={summary.avg_soc} />
-        {/* Parked inside the undercroft rather than on open ground to the
-            left. That bay is part of the building footprint, so the car no
-            longer contributes to the scene's width — it was previously the
-            leftmost object and, with the pylon, set the span the camera had
-            to fit, scaling the house down to suit. Position comes from the
-            house so the two cannot drift apart.
-
-            A real model now, not the extruded profile: an actual vehicle is
-            what sells the scene as a render rather than a diagram, and it is
-            the one object in the reference images that unmistakably reads as
-            real. The procedural Car stays as the Suspense fallback so the bay
-            is never empty while 4 MB streams in — and so the scene still
-            works if the asset is ever removed.
-
-            targetHeight 0.42 world units: the house body is 3.4 across for a
-            building of roughly 12 m, putting a scene unit near 3.5 m, so a
-            ~1.5 m car lands about here. GltfModel rescales whatever it is
-            given to this, so the source export's own scale is irrelevant.
-
-            Licensed CC BY 4.0 — attribution is required and lives in
-            public/models/ATTRIBUTION.md and scene/model-credits.ts. Do not
-            ship this asset without that credit rendered somewhere visible. */}
-        <GltfModel
-          url="/models/car.glb"
-          targetHeight={0.42}
-          position={CARPORT_POSITION}
-          fallback={<Car position={CARPORT_POSITION} rotation={Math.PI * 0.5} length={1.15} />}
-        />
+        <BatteryPack accentColor={ACCENTS.battery} soc={soc} />
         <GridPylon />
 
         {/* Conduit runs. All four terminate on the inverter, which is what
@@ -407,8 +511,9 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
           points={SOLAR_ROUTE}
           active={solar.active}
           reverse={solar.reverse}
-          speed={scalePowerFlowSpeed(solarW, maxWatts)}
+          speed={scalePowerFlowSpeed(solarW ?? 0, maxWatts)}
           particleCount={2}
+          conduitColor={lighting.ink.conduit}
           color={ACCENTS.solar}
         />
         <PowerFlowEdge3D
@@ -417,8 +522,9 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
           // Authored pylon->inverter, so non-reversed = importing; exporting
           // (gridW < 0) runs the other way.
           reverse={grid.reverse}
-          speed={scalePowerFlowSpeed(gridW, maxWatts)}
+          speed={scalePowerFlowSpeed(gridW ?? 0, maxWatts)}
           particleCount={2}
+          conduitColor={lighting.ink.conduit}
           color={ACCENTS.grid}
         />
         <PowerFlowEdge3D
@@ -429,14 +535,16 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
           reverse={battery.reverse}
           speed={scalePowerFlowSpeed(batteryW, maxWatts)}
           particleCount={2}
+          conduitColor={lighting.ink.conduit}
           color={ACCENTS.battery}
         />
         <PowerFlowEdge3D
           points={LOAD_ROUTE}
           active={load.active}
           reverse={load.reverse}
-          speed={scalePowerFlowSpeed(loadW, maxWatts)}
+          speed={scalePowerFlowSpeed(loadW ?? 0, maxWatts)}
           particleCount={2}
+          conduitColor={lighting.ink.conduit}
           color={ACCENTS.load}
         />
 
@@ -455,31 +563,34 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
             apart rather than nudged. These are screen-space pixels against a
             zoom that varies with panel size, so they are the one thing here
             most likely to want a nudge once it is seen at real wall scale. */}
-        <PowerFlowCallout3D anchor={SOLAR_PANEL_ANCHOR} label="Solar" value={formatPower(solarW)} color={ACCENTS.solar} offsetX={30} />
+        <PowerFlowCallout3D anchor={SOLAR_PANEL_ANCHOR} label="Solar" value={formatPower(solarW)} color={ACCENTS.solar} ink={lighting.ink} offsetX={30} />
         <PowerFlowCallout3D
           anchor={PYLON_ANCHOR}
           label="Grid"
-          value={formatPower(Math.abs(gridW))}
+          value={formatPower(gridW == null ? null : Math.abs(gridW))}
           sublabel={grid.note ?? undefined}
           color={ACCENTS.grid}
+          ink={lighting.ink}
         />
         <PowerFlowCallout3D
           anchor={[HOUSE_LOAD_ANCHOR[0], HOUSE_LOAD_ANCHOR[1] + 0.2, HOUSE_LOAD_ANCHOR[2]]}
           label="Load"
           value={formatPower(loadW)}
           color={ACCENTS.load}
+          ink={lighting.ink}
           offsetX={46}
         />
         <PowerFlowCallout3D
           anchor={BATTERY_ANCHOR}
           label="Battery"
-          value={formatPercent(summary.avg_soc)}
+          value={formatPercent(soc)}
           sublabel={
             battery.valueW == null
               ? "flow not reported"
               : `${battery.note ?? "idle"} ${formatPower(Math.abs(battery.valueW))}`
           }
           color={ACCENTS.battery}
+          ink={lighting.ink}
           offsetX={-70}
         />
 
@@ -495,30 +606,16 @@ export function Fleet3DPowerFlow({ summary, className }: { summary: FleetSummary
             off-screen — and read a scroll as a GPU that cannot cope. */}
         {tier === "full" && renderActive && <PerformanceMonitor onDecline={handleDecline} />}
 
-        {/* Ambient occlusion: the contact darkening in corners, under the
-            roof overhang and beneath the furniture. This is the single
-            largest remaining difference between a lit render and something
-            that reads as a flat drawing — plain white surfaces only look
-            solid once their creases are shaded.
-
-            halfRes + depthAwareUpsampling computes AO at quarter the pixel
-            count and upsamples along depth edges; at the size this panel
-            renders that is visually indistinguishable and roughly a third of
-            the cost. multisampling is left on the composer rather than
-            adding a separate SMAA pass — WebGL2 gives MSAA on the render
-            target for free, and that is one fewer full-screen pass. */}
+        {/* Ambient occlusion — the contact darkening that makes the massing
+            read as solid. Its chunk is fetched only once we know this device
+            is on the "full" tier, so the scene's first frame never waits on
+            it; `fallback={null}` means the un-shaded scene renders in the
+            meantime and the shading resolves into it. Suspense inside a
+            Canvas is handled by the r3f reconciler, not by the DOM one. */}
         {aoEnabled && (
-          <EffectComposer multisampling={4} enableNormalPass={false}>
-            <N8AO
-              aoRadius={0.28}
-              distanceFalloff={0.8}
-              intensity={2.6}
-              quality="medium"
-              halfRes
-              depthAwareUpsampling
-              color="#2a3242"
-            />
-          </EffectComposer>
+          <Suspense fallback={null}>
+            <AmbientOcclusion intensity={lighting.aoIntensity} />
+          </Suspense>
         )}
       </Canvas>
     </div>

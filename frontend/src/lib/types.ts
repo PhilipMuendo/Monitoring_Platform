@@ -127,15 +127,25 @@ export interface SitePage {
 }
 
 export interface HealthResponse {
-  status: "healthy" | "degraded";
+  // "unhealthy" is served with HTTP 503 and was missing from this union, so
+  // the one status that means "stop routing traffic here" did not typecheck.
+  status: "healthy" | "degraded" | "unhealthy";
   timestamp: string;
+  checks?: {
+    database?: { ok: boolean; latency_ms?: number; error?: string };
+    collector?: { ok: boolean; last_run?: string };
+  };
   metrics: {
     last_collection: string;
     total_sites: number;
     success_rate: number;
     avg_duration_ms: number;
-    brands: Record<string, { online: number; offline: number }>;
-    alerts_active: number;
-    alerts_24h: number;
+    // `unknown` is the whole point of this map and was omitted here: it means
+    // WE could not read the site, as opposed to the site being off. Counting
+    // it as offline turns one broken vendor integration into an apparent
+    // fleet outage — see lib/platform-status.ts.
+    brands: Record<string, { online: number; offline: number; unknown: number }>;
+    alerts_active: number | null;
+    alerts_24h: number | null;
   };
 }

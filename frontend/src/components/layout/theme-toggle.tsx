@@ -4,6 +4,7 @@ import { Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /**
  * Light/dark switch.
@@ -15,7 +16,11 @@ import { Button } from "@/components/ui/button";
  * resolvedTheme inside the click handler is safe — handlers only ever run
  * after hydration, so it can't cause a mismatch.
  */
-export function ThemeToggle() {
+// `className` exists so the header can override the ghost variant's colours:
+// that variant resolves against --foreground/--accent, and the header now
+// renders on the brand's dark green in BOTH themes, where light-mode
+// foreground would be near-invisible.
+export function ThemeToggle({ className }: { className?: string }) {
   const { resolvedTheme, setTheme } = useTheme();
 
   return (
@@ -25,7 +30,7 @@ export function ThemeToggle() {
       aria-label="Toggle light or dark theme"
       title="Toggle theme"
       onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-      className="size-8"
+      className={cn("size-8", className)}
     >
       <Sun className="size-4 dark:hidden" />
       <Moon className="hidden size-4 dark:block" />

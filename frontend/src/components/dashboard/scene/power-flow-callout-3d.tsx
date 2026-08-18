@@ -5,7 +5,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 
-import { STUDIO_INK } from "@/lib/power-flow-colors";
+import type { StudioInk } from "@/lib/power-flow-colors";
 
 interface PowerFlowCallout3DProps {
   anchor: [number, number, number];
@@ -13,10 +13,17 @@ interface PowerFlowCallout3DProps {
   value: string;
   sublabel?: string;
   /**
-   * Accent for this quantity, from POWER_FLOW_COLORS.light — not a theme
-   * class. These labels sit on the scene's fixed-light studio background in
-   * both themes, so a `text-solar` class would resolve to the dark-mode
-   * amber (L=0.8) and render at ~1.6:1 on a near-white canvas.
+   * Text and leader colours for the phase the scene is currently in, from
+   * SCENE_LIGHTING. Passed rather than imported because the canvas background
+   * follows the clock in Kenya: near-black labels are correct at midday and
+   * illegible over the night sky.
+   */
+  ink: StudioInk;
+  /**
+   * Accent for this quantity, from SCENE_LIGHTING's `accents` — not a theme
+   * class. These labels sit on the canvas, whose background follows the clock
+   * in Kenya rather than the app theme, so a `text-solar` class would pick
+   * whichever variant the *page* is in and be wrong roughly half the time.
    *
    * Used only for the small marker dot. See the note on the value colour.
    */
@@ -59,6 +66,7 @@ export function PowerFlowCallout3D({
   value,
   sublabel,
   color,
+  ink,
   minLineLength = 18,
   offsetX = 0,
 }: PowerFlowCallout3DProps) {
@@ -90,7 +98,7 @@ export function PowerFlowCallout3D({
         }}
       >
         <div className="flex flex-col items-center leading-tight">
-          <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider" style={{ color: STUDIO_INK.muted }}>
+          <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider" style={{ color: ink.muted }}>
             {/* The accent survives as a 4px dot rather than tinting the whole
                 readout. Four saturated values at once made the overlay look
                 like a chart legend; the reference spends its colour budget on
@@ -98,17 +106,17 @@ export function PowerFlowCallout3D({
             <span aria-hidden className="inline-block size-1 rounded-full" style={{ backgroundColor: color }} />
             {label}
           </span>
-          <span className="font-mono text-[13px] font-semibold tabular-nums" style={{ color: STUDIO_INK.strong }}>
+          <span className="font-mono text-[13px] font-semibold tabular-nums" style={{ color: ink.strong }}>
             {value}
           </span>
           {sublabel && (
-            <span className="text-[9px]" style={{ color: STUDIO_INK.muted }}>
+            <span className="text-[9px]" style={{ color: ink.muted }}>
               {sublabel}
             </span>
           )}
         </div>
         <div className="flex flex-col items-center pt-1.5">
-          <div ref={lineRef} className="w-0 border-l border-dashed" style={{ height: minLineLength, borderColor: STUDIO_INK.line }} />
+          <div ref={lineRef} className="w-0 border-l border-dashed" style={{ height: minLineLength, borderColor: ink.line }} />
         </div>
       </div>
     </Html>

@@ -117,8 +117,25 @@ export function useChat() {
           }
         }
 
-        const assistantMessage: ChatMessage = { role: "model", text: assistantText };
-        historyRef.current = [...history, userMessage, assistantMessage].slice(-20);
+        // Only commit the exchange if the model actually said something.
+        //
+        // This used to run unconditionally, which meant a failed turn wrote
+        // `{ role: "model", text: "" }` into the history — and Gemini rejects
+        // an empty part outright (HTTP 400, "parts[0].data must have one
+        // initialized field"). The effect was badly out of proportion to the
+        // cause: ONE transient upstream 503 permanently bricked the
+        // conversation, and every message after it failed with a completely
+        // different error that pointed nowhere near the original problem.
+        //
+        // The user's own message is dropped along with it rather than kept.
+        // Keeping it would leave an unanswered user turn, so the next request
+        // would send two user turns back to back — a malformed conversation,
+        // trading one bad state for a subtler one. It stays visible in the
+        // transcript either way; this ref is only what gets replayed.
+        if (assistantText !== "") {
+          const assistantMessage: ChatMessage = { role: "model", text: assistantText };
+          historyRef.current = [...history, userMessage, assistantMessage].slice(-20);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "chat request failed");
       } finally {

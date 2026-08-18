@@ -71,3 +71,14 @@ const getServerSnapshot = () => null;
 export function useWebGLTier(): WebGLTier | null {
   return useSyncExternalStore<WebGLTier | null>(subscribe, getSnapshot, getServerSnapshot);
 }
+
+/**
+ * The same verdict, for callers that are not components — currently the scene
+ * preloader, which decides whether downloading ~370 KB of gzipped WebGL code
+ * is worth doing at all. Browser only; `document` must exist.
+ *
+ * Shares the cache with the hook, so calling both costs one probe.
+ */
+export function webglTier(): WebGLTier {
+  return probe();
+}

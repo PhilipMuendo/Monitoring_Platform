@@ -1,11 +1,17 @@
 /**
  * Attribution for bundled third-party 3D models.
  *
- * This exists to satisfy a licence, not to be tidy. The car in the undercroft
- * is CC BY 4.0, which permits commercial use and modification but *requires*
- * crediting the author wherever the work appears. A note in a markdown file
- * inside the repository is not attribution to the people looking at the
- * dashboard, so the credit is rendered in the app as well.
+ * This exists to satisfy a licence, not to be tidy. A licence like CC BY
+ * permits commercial use and modification but *requires* crediting the author
+ * wherever the work appears, and a note in a markdown file inside the
+ * repository is not attribution to the people looking at the dashboard — so
+ * whatever is listed here is rendered on the 3D panel itself.
+ *
+ * THE LIST IS EMPTY, AND THE MECHANISM IS STILL LIVE. The scene is entirely
+ * procedural: the one asset that ever shipped was a CC BY concept car, removed
+ * along with its 4 MB download. The renderer in fleet-3d-power-flow.tsx still
+ * maps over this array, so adding an entry here is all it takes for the credit
+ * to reappear on screen.
  *
  * Keep this in sync with frontend/public/models/ATTRIBUTION.md. If a model is
  * removed, drop its entry; if one is added under a licence requiring
@@ -21,16 +27,7 @@ export interface ModelCredit {
   sourceUrl: string;
 }
 
-export const MODEL_CREDITS: ModelCredit[] = [
-  {
-    file: "car.glb",
-    title: "CarConcept",
-    author: "Eric Chadwick / Darmstadt Graphics Group GmbH",
-    licence: "CC BY 4.0",
-    licenceUrl: "https://creativecommons.org/licenses/by/4.0/",
-    sourceUrl: "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/CarConcept",
-  },
-];
+export const MODEL_CREDITS: ModelCredit[] = [];
 
 /** One-line credit, e.g. for a tooltip or an aria-label. */
 export function creditLine(credit: ModelCredit): string {

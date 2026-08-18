@@ -113,8 +113,39 @@ const ROOF_Z = 0.04;
 // Depth chosen so the back edge lands flush with the cutaway's back wall
 // (z = -1.025) and the front carries a modest 0.08 eaves overhang.
 const ROOF_D = 2.13;
-/** Top face of the roof slab — the surface the grid conduit runs along. */
+/** Top face of the roof slab. */
 export const ROOF_TOP_Y = WALL_TOP + ROOF_T;
+/**
+ * The floor line between the ground and first storeys — the surface the grid
+ * conduit runs along.
+ *
+ * It is a real, continuous line across the whole building rather than a
+ * convenient height: on the closed wing it is expressed as the shadow-line
+ * reveal below, and across the open cutaway it is the exposed edge of the
+ * first-floor slab. A conduit laid on it is attached to something for its
+ * entire length, which is the whole reason the run moved down here off the
+ * roof.
+ *
+ * It also happens to be the only clear horizontal band on the facade: the
+ * ground-floor glazing tops out at 1.17 and the upper glazing starts at
+ * 1.615, so a run at 1.3 crosses neither.
+ */
+export const STOREY_LINE_Y = GROUND_H;
+/**
+ * Front plane of the facade — and of the exposed slab edge across the
+ * cutaway, which is flush with it. One constant because the grid run crosses
+ * both and must stay in a single plane to read as one straight line.
+ */
+export const FACADE_Z = GROUND_HALF_D;
+/**
+ * Outer face of the right end wall — the side the grid service comes down.
+ *
+ * This wall is full height (WALL_TOP) and full depth (GROUND_D), so it is a
+ * solid surface for the whole descent, and it is the face nearest the pylon.
+ */
+export const SIDE_X = HALF_W;
+/** Rear extent of the side wall, for reference when placing the service bracket. */
+export const SIDE_BACK_Z = -GROUND_HALF_D;
 /** Front edge of the eaves. A conduit dropping to the facade must clear this in Z. */
 export const ROOF_FRONT_Z = ROOF_Z + ROOF_D / 2;
 /** Local Z of the array inside the roof group, leaving a clear deck strip at the front. */
@@ -146,8 +177,14 @@ const SERVICE_BAY_RIGHT = Math.min(GROUND_WIN_X - GROUND_WIN_W / 2, UPPER_WIN_X 
 // — the reason it moved — means they can each reach it without crossing a
 // window or each other. See the routing block in fleet-3d-power-flow.tsx.
 const HUB_X = -1.3;
-const HUB_HALF_W = 0.11;
-const HUB_HALF_H = 0.16;
+// Enlarged from 0.11 x 0.16. The inverter is the thing every one of the four
+// conduits terminates on — it is the subject of the routing, and at the old
+// size it was a chip on the wall that the runs appeared to converge past
+// rather than into. Still bounded on both sides: the glazing's left edge is
+// at SERVICE_BAY_RIGHT (-1.0) and the wing's corner is at -1.7, so the box
+// can grow to roughly this and no further without hitting one or the other.
+const HUB_HALF_W = 0.155;
+const HUB_HALF_H = 0.22;
 export const HOUSE_HUB_ANCHOR: [number, number, number] = [HUB_X, 0.92, GROUND_HALF_D + 0.07];
 /** Faces of the inverter box. Conduits terminate on these, not on its centre. */
 export const HUB_LEFT_X = HUB_X - HUB_HALF_W;
@@ -613,13 +650,30 @@ export function House({ loadActive = false }: { loadActive?: boolean }) {
 
       {/* Wall-mounted inverter (the convergence hub) plus the utility meter
           beside it, both on the closed wing's facade like the reference. */}
-      <RoundedBox args={[0.22, 0.32, 0.1]} radius={0.03} smoothness={3} position={HOUSE_HUB_ANCHOR} castShadow>
+      <RoundedBox
+        args={[HUB_HALF_W * 2, HUB_HALF_H * 2, 0.13]}
+        radius={0.03}
+        smoothness={3}
+        position={HOUSE_HUB_ANCHOR}
+        castShadow
+      >
         <meshStandardMaterial color={STUDIO.cabinet} roughness={0.5} metalness={0.1} />
       </RoundedBox>
-      <mesh position={[HOUSE_HUB_ANCHOR[0], HOUSE_HUB_ANCHOR[1], HOUSE_HUB_ANCHOR[2] + 0.04]}>
-        <boxGeometry args={[0.13, 0.09, 0.03]} />
+      {/* Display, sized with the box. Sat proud by 0.005 before and still
+          does — the case front is now at +0.065 rather than +0.05. */}
+      <mesh position={[HOUSE_HUB_ANCHOR[0], HOUSE_HUB_ANCHOR[1] + 0.04, HOUSE_HUB_ANCHOR[2] + 0.055]}>
+        <boxGeometry args={[0.19, 0.13, 0.03]} />
         <meshStandardMaterial color={STUDIO.cabinetScreen} emissive="#1d84f5" emissiveIntensity={0.3} roughness={0.3} />
       </mesh>
+      {/* Ventilation louvres across the lower case. Free detail at this size —
+          three thin bars are what stop the bigger box reading as a blank
+          slab now that there is room below the display to see it. */}
+      {[-0.06, -0.105, -0.15].map((dy) => (
+        <mesh key={dy} position={[HOUSE_HUB_ANCHOR[0], HOUSE_HUB_ANCHOR[1] + dy, HOUSE_HUB_ANCHOR[2] + 0.058]}>
+          <boxGeometry args={[0.17, 0.018, 0.012]} />
+          <meshStandardMaterial color={STUDIO.cabinetTrim} roughness={0.6} />
+        </mesh>
+      ))}
       <RoundedBox
         args={[0.14, 0.18, 0.08]}
         radius={0.02}

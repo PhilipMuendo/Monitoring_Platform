@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Collective Energy Africa">
+  <title>Collective Energy Africa</title>
+  <!--
+    The Collective Energy Africa "C" mark, on WHITE.
+
+    The supplied artwork is light on a dark green plate. That is right for the
+    site header and wrong for a favicon: a browser tab strip is light in most
+    themes, so a dark plate renders as a green square with an invisible mark
+    inside it, and at 16px a favicon is read as a silhouette before it is read
+    as anything else. Dark artwork on white keeps the silhouette legible on
+    light chrome, on dark chrome, and in a bookmark list.
+
+    Colours are the two documented brand tokens (see globals.css): #0b1e0b is
+    the near-black green off the logo plate, #3a9b43 the CTA green. The accent
+    sits on the middle bar only. At 16px three identical bars merge into a
+    grey smear, and one contrasting stripe is what keeps the mark reading as
+    three.
+
+    NOTE ON XML: comments here must not contain a double hyphen, which is why
+    the CSS custom properties above are named in prose rather than written
+    out. A double hyphen is a parse error, and it fails at RENDER time in
+    strict parsers (librsvg, some favicon pipelines) while looking fine in a
+    browser, so it is an easy way to ship a broken icon.
+
+    RECONSTRUCTED FROM A SMALL RASTER, not from the brand's own vector file.
+    The geometry is matched by eye. If the official SVG turns up, replace this
+    file and src/app/icon.svg with it rather than editing these paths.
+  -->
+  <rect width="64" height="64" fill="#ffffff"/>
+
+  <!--
+    The ring, open to the right. Drawn as one arc rather than a circle with a
+    masked notch so the stroke caps are real ends: a masked circle leaves
+    square corners at the opening, which at favicon size reads as a rendering
+    fault rather than as a design.
+  -->
+  <path
+    d="M 50.4 47.4 A 24 24 0 1 1 50.4 16.6"
+    fill="none"
+    stroke="#0b1e0b"
+    stroke-width="6"
+    stroke-linecap="round"
+  />
+
+  <!-- The three bars. Rounded caps to match the ring's terminals. -->
+  <g stroke-linecap="round" stroke-width="4.5">
+    <line x1="22" y1="22.5" x2="42" y2="22.5" stroke="#0b1e0b"/>
+    <line x1="22" y1="32" x2="42" y2="32" stroke="#3a9b43"/>
+    <line x1="22" y1="41.5" x2="42" y2="41.5" stroke="#0b1e0b"/>
+  </g>
+</svg>

@@ -64,6 +64,14 @@
   --color-status-warning: var(--status-warning);
   --color-status-critical: var(--status-critical);
   --color-status-offline: var(--status-offline);
+
+  /* Collective Energy Africa brand. Sampled from the logo and the live site
+     rather than eyeballed: #0b1e0b is 93% of the nav bar and 86% of the logo
+     plate, #3a9b43 is 100% of both CTA buttons. See the note in :root. */
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-elevated: var(--brand-elevated);
+  --color-brand-accent: var(--brand-accent);
 }
 
 :root {
@@ -73,7 +81,10 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  /* Brand dark green, not neutral black. Near-identical lightness to the
+     0.205 it replaces, so buttons keep their weight and simply pick up the
+     green. See the brand block at the end of this rule. */
+  --primary: oklch(0.213 0.044 143.8);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -84,7 +95,10 @@
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  /* The undarkened brand green. A focus ring is a graphic, not text, so the
+     3:1 bar applies and its 3.53:1 on white clears it — no need to spend the
+     saturation that makes the focus state obvious. */
+  --ring: oklch(0.612 0.155 144.9);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -120,6 +134,32 @@
   --status-warning: oklch(0.58 0.15 66);
   --status-critical: oklch(0.55 0.22 25);
   --status-offline: oklch(0.52 0.01 0);
+
+  /* --- Collective Energy Africa brand ---------------------------------
+     Two colours, and the split between them is the whole design.
+
+     --brand is the near-black green off the logo plate and site nav
+     (#0b1e0b). It carries chrome: the header, primary buttons. White on it
+     measures 17.4:1, so it is a safe surface for anything.
+
+     --brand-accent is the CTA green (#3a9b43). It is deliberately NOT used
+     as a general-purpose UI colour, because it sits 7.1 degrees of hue from
+     --status-online and --battery above (144.9 vs 152). Spend it broadly and
+     "this site is online" stops reading as a signal and starts reading as
+     decoration. It is confined to interactive affordances — links, focus,
+     the active nav item — which are structurally distinct from a status dot
+     or a chart line. The company's own site draws the same line: dark green
+     chrome, bright green only on CTAs.
+
+     The accent is darkened here from the source #3a9b43 (L 0.612 -> 0.550).
+     The raw brand green measures 3.53:1 on white — fine for a focus ring,
+     which is a graphic needing 3:1, but below the 4.5:1 that link text
+     needs. Same trick the energy hues above already use, same reason. */
+  --brand: oklch(0.213 0.044 143.8);
+  --brand-foreground: oklch(0.985 0 0);
+  /* A lift off --brand for panels that sit on it (the login form column). */
+  --brand-elevated: oklch(0.262 0.042 143.8);
+  --brand-accent: oklch(0.55 0.155 144.9);
 }
 
 .dark {
@@ -129,8 +169,13 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  /* The bright brand green here, not the dark one. Dark mode inverts
+     primary — a #0b1e0b button on a near-black background would be an
+     invisible button. Dark text on it measures 4.94:1; white would be
+     3.53:1, which is why the label is not white even though the company's
+     own site sets it that way. */
+  --primary: oklch(0.612 0.155 144.9);
+  --primary-foreground: oklch(0.16 0.03 144.9);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -140,7 +185,7 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --ring: oklch(0.612 0.155 144.9);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -168,6 +213,90 @@
   --status-warning: oklch(0.8 0.17 70);
   --status-critical: oklch(0.68 0.22 25);
   --status-offline: oklch(0.5 0.01 0);
+
+  /* --brand and --brand-elevated do not change between themes: they are the
+     literal brand surfaces, and the header renders on them in both. Only the
+     accent moves, lifted to 0.600 so it clears 4.5:1 on the dark card
+     (measured 4.83:1) rather than on white. */
+  --brand: oklch(0.213 0.044 143.8);
+  --brand-foreground: oklch(0.985 0 0);
+  --brand-elevated: oklch(0.262 0.042 143.8);
+  --brand-accent: oklch(0.6 0.155 144.9);
+}
+
+/* Indeterminate progress sweep, used while the 3D scene's chunk is on the
+   wire (see fleet-power-flow-view.tsx).
+
+   Indeterminate rather than a percentage because next/dynamic's import()
+   reports no progress at all — there is no honest number to draw, and a fake
+   one that sticks at 90% is worse than no number. `transform` only, so the
+   whole animation runs on the compositor: this plays on the wall display's
+   Smart TV alongside a WebGL canvas that is about to start compiling shaders,
+   and a layout-animating bar would steal frames from exactly that. */
+@keyframes scene-load-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.scene-load-sweep {
+  animation: scene-load-sweep 1.4s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still has to say "busy" without moving, so it becomes a dim static fill
+     rather than disappearing — the spinner beside it is suppressed by
+     tw-animate-css under the same query. */
+  .scene-load-sweep {
+    animation: none;
+    transform: none;
+    width: 100%;
+    opacity: 0.4;
+  }
+}
+
+/* BURN-IN PROTECTION for the wall display.
+   
+   This screen shows a near-identical layout for years: the same header bar,
+   the same card borders, the same "Needs Attention" heading, always on the
+   same pixels. That is how you get a permanently ghosted outline on an OLED,
+   and image persistence on an LCD. Every commercial signage player shifts its
+   image slowly for exactly this reason.
+
+   +/-6px over a 20-minute cycle. That works out to roughly 0.02 px per second,
+   which is far below the threshold at which motion is perceptible, let alone
+   uncomfortable — so this is deliberately NOT suppressed under
+   prefers-reduced-motion, unlike .scene-load-sweep above. Disabling it there
+   would trade a hardware protection for an accessibility fix to a problem
+   that does not exist at this speed.
+
+   `transform` only, so it composites and never triggers layout: the wall runs
+   this alongside a WebGL canvas and must not steal frames from it. The page
+   root is bg-background on a body that is also bg-background, so the strip
+   uncovered at the edges is the same colour and the shift is invisible. */
+@keyframes wall-burn-in-shift {
+  0% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(6px, 3px);
+  }
+  50% {
+    transform: translate(0, 6px);
+  }
+  75% {
+    transform: translate(-6px, 3px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+.wall-burn-in-shift {
+  animation: wall-burn-in-shift 1200s linear infinite;
 }
 
 @layer base {

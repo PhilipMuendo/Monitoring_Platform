@@ -1,31 +1,32 @@
 # 3D model drop-in
 
-The power-flow scene (`src/components/dashboard/scene/`) is procedural: the
-house, battery cabinet, lattice pylon and car are all built from three.js
-primitives at runtime. Nothing here is required for the app to work, and the
-directory ships empty.
+The power-flow scene (`src/components/dashboard/scene/`) is **entirely
+procedural**: the house, its interior, the battery cabinet, the lattice pylon
+and the whole compound — lawn, paving and security lighting — are built
+from three.js primitives at runtime. Nothing in this directory is required for
+the app to work, and it ships with no models in it.
 
-## Why no .glb is bundled by default
+## Why no .glb is bundled
 
-> **Re-evaluate this.** The reasoning below was written when the panel was
-> ~380 px tall and the scene was lit flat. Two things have changed:
->
-> 1. **The panel is much bigger.** It is now 600 px on the dashboard and takes
->    71% of the wall display, and the camera scales the scene to fill it —
->    roughly 1.6x linear on a 1920 desktop and up to 2.7x on a 4K wall screen.
->    The car is no longer a 40 px smudge, so geometry detail now survives to
->    the screen in a way it did not.
-> 2. **The scene is properly lit.** It now runs ambient occlusion, Neutral
->    tone mapping, real contact shadows and sheened materials. The warning
->    below that a photoscanned PBR asset "will look pasted in" was true of a
->    flat-lit scene; a well-lit one is far more forgiving, and the gap between
->    a primitive and a real model is correspondingly more visible.
->
-> The download-size argument still stands on its own. The aesthetic argument
-> largely does not.
+One was, and it was removed. `car.glb` (Khronos `CarConcept`, CC BY 4.0)
+shipped 4 MB of Draco-compressed geometry plus a ~750 KB decoder — more than
+three times the size of the entire 3D scene chunk — and was withdrawn for four
+reasons that are worth keeping written down, because the first is the weakest
+and the last is the one that actually settled it:
 
-The scene originally rendered into a ~380 px dashboard panel, where the car
-was about 40 px tall on screen. Real candidates measured against that:
+1. **Download size.** 4.75 MB on a panel that is opt-in to begin with.
+2. **Decode cost.** ~162k vertices through a WASM Draco decoder on the main
+   thread, including 24k-primitive windscreen wipers.
+3. **Licence.** CC BY requires the credit to render *in the app*, so the panel
+   permanently carried an attribution line for a prop.
+4. **Composition.** Its saturated red was the loudest colour in the render —
+   louder than any of the four semantic flow colours. On a panel whose entire
+   job is to show colour-coded power flows, the eye went to a parked car.
+
+The undercroft still reads as a carport: `scene/compound.tsx` puts a paved
+apron and a drive in front of it.
+
+Candidates that were measured, if a vehicle is ever wanted again:
 
 | Asset | Licence | Size | Notes |
 |---|---|---|---|
@@ -33,10 +34,13 @@ was about 40 px tall on screen. Real candidates measured against that:
 | Khronos `CarConcept` (Draco + KTX2) | CC BY 4.0 | 3.5 MB / 16 files | needs Draco + KTX2 WASM transcoders |
 | Khronos `ToyCar` | CC0 1.0 | 5.4 MB | public domain, but toy proportions |
 
-Shipping megabytes and a WASM transcoder chain so an operator can see a
-slightly nicer car beside the number that tells them a site is down is a bad
-trade, so the default build doesn't. The loader below exists so that
-decision stays yours rather than being baked in.
+Prefer CC0. Anything CC BY needs an entry in `scene/model-credits.ts` as well
+as in `ATTRIBUTION.md` — the renderer maps over that array, so adding the
+entry is all it takes for the credit to reappear on screen.
+
+The loader below is kept wired up so that decision stays open rather than
+being baked in. It costs nothing while unused: no module imports it, so it is
+tree-shaken out of the scene chunk entirely.
 
 ### Decoders
 
