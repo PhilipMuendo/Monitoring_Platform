@@ -18,6 +18,21 @@ func (d *Deps) handleListActiveAlerts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, alerts)
 }
 
+// handleListAlertHistory is the standalone alert history page's data
+// source — every alert fleet-wide, active or resolved, newest first, with
+// the timestamps the dashboard's relative-time issues panel doesn't show.
+func (d *Deps) handleListAlertHistory(w http.ResponseWriter, r *http.Request) {
+	page, err := d.Alerts.ListHistory(r.Context(), storage.HistoryParams{
+		Limit:  queryInt(r, "limit", 0),
+		Offset: queryInt(r, "offset", 0),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list alert history")
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
 // handleAcknowledgeAlert closes the alert (see storage.AlertRepo.Acknowledge
 // for why acknowledgement also resolves it) and pushes the update to any
 // connected SSE clients so it disappears from the issues panel live.

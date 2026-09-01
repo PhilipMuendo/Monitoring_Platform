@@ -30,7 +30,15 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      # Host-side 8081 (not 8080): this machine runs a native Apache on
+      # 8080 that wins on the LAN interface (Docker's own port-forwarder
+      # only reliably shadows it on 127.0.0.1/localhost, via Docker
+      # Desktop's special loopback handling — a LAN-IP request to 8080
+      # silently lands on Apache's 404 page instead of this container).
+      # Matches the PORT=8081 already used when running the binary
+      # natively — see backend/.env. The container's own PORT stays the
+      # internal default (8080); only this host-side mapping changes.
+      - "8081:8080"
     environment:
       DB_HOST: db
       DB_PORT: 5432

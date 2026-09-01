@@ -57,7 +57,7 @@ func NewRouter(d *Deps) http.Handler {
 	// Request ID first so every downstream log line and response carries it.
 	r.Use(observability.RequestIDMiddleware)
 	r.Use(requestLogger(d.Metrics))
-	r.Use(cors(d.Cfg.CORSAllowedOrigin))
+	r.Use(cors(d.Cfg.CORSAllowedOrigins))
 
 	r.Get("/health", d.handleHealth)
 	r.Get("/healthz", d.handleLiveness)
@@ -93,6 +93,7 @@ func NewRouter(d *Deps) http.Handler {
 			r.Get("/sites/{id}/alerts", d.handleSiteAlerts)
 
 			r.Get("/alerts", d.handleListActiveAlerts)
+			r.Get("/alerts/history", d.handleListAlertHistory)
 			r.Post("/chat", d.handleChat)
 
 			r.Group(func(r chi.Router) {

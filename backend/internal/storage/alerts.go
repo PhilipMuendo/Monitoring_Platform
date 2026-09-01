@@ -120,6 +120,70 @@ func (r *AlertRepo) ListActive(ctx context.Context) ([]models.Alert, error) {
 	return collectAlerts(rows)
 }
 
+// HistoryParams bounds a fleet-wide alert history listing — the same
+// pagination discipline as storage.ListParams (sites.go), for the same
+// reason: the history page is meant to be paged through, not used to pull
+// the whole alerts table in one request.
+type HistoryParams struct {
+	Limit  int
+	Offset int
+}
+
+const (
+	defaultHistoryLimit = 50
+	maxHistoryLimit     = 200
+)
+
+func (p HistoryParams) Normalize() HistoryParams {
+	if p.Limit <= 0 {
+		p.Limit = defaultHistoryLimit
+	}
+	if p.Limit > maxHistoryLimit {
+		p.Limit = maxHistoryLimit
+	}
+	if p.Offset < 0 {
+		p.Offset = 0
+	}
+	return p
+}
+
+// HistoryPage is one page of alerts plus the unpaginated total, mirroring
+// storage.ListPage (sites.go) so the UI can render "showing 1-50 of 412"
+// without a second round trip.
+type HistoryPage struct {
+	Alerts []models.Alert `json:"alerts"`
+	Total  int            `json:"total"`
+	Limit  int            `json:"limit"`
+	Offset int            `json:"offset"`
+}
+
+// ListHistory returns every alert fleet-wide (active AND resolved),
+// newest first — unlike ListActive, which exists for the dashboard's
+// "Active Issues" panel and deliberately excludes resolved alerts.
+func (r *AlertRepo) ListHistory(ctx context.Context, p HistoryParams) (HistoryPage, error) {
+	p = p.Normalize()
+
+	var total int
+	if err := r.db.Pool.QueryRow(ctx, `SELECT count(*) FROM alerts`).Scan(&total); err != nil {
+		return HistoryPage{}, fmt.Errorf("count alerts: %w", err)
+	}
+
+	rows, err := r.db.Pool.Query(ctx, alertSelect+`
+		ORDER BY a.created_at DESC
+		LIMIT $1 OFFSET $2
+	`, p.Limit, p.Offset)
+	if err != nil {
+		return HistoryPage{}, fmt.Errorf("list alert history: %w", err)
+	}
+	defer rows.Close()
+
+	alerts, err := collectAlerts(rows)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	return HistoryPage{Alerts: alerts, Total: total, Limit: p.Limit, Offset: p.Offset}, nil
+}
+
 func (r *AlertRepo) ListForSite(ctx context.Context, siteID string, limit int) ([]models.Alert, error) {
 	rows, err := r.db.Pool.Query(ctx, alertSelect+`
 		WHERE a.site_id = $1::uuid ORDER BY a.created_at DESC LIMIT $2

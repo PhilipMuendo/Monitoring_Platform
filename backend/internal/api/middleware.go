@@ -10,18 +10,32 @@ import (
 	"solar-monitor/internal/observability"
 )
 
-// cors restricts cross-origin requests to the configured frontend origin
-// only, per the brief's "CORS configured for frontend domain only" requirement.
-func cors(allowedOrigin string) func(http.Handler) http.Handler {
+// cors restricts cross-origin requests to the configured frontend
+// origin(s), per the brief's "CORS configured for frontend domain only"
+// requirement — extended to an allow-list because the same backend is
+// legitimately reached from more than one origin (e.g. a phone on the LAN
+// alongside a browser on localhost). A browser only accepts an exact
+// origin echoed back in this header, never a comma-joined list or a
+// wildcard alongside credentialed requests, so unlike the old
+// single-value version this must compare against the request's actual
+// Origin and echo back only that one.
+func cors(allowedOrigins []string) func(http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowed[o] = true
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Vary: Origin — without it a shared cache (CDN, reverse
 			// proxy) can serve one origin's CORS response to another.
 			w.Header().Add("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			if origin := r.Header.Get("Origin"); allowed[origin] {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return

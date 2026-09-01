@@ -69,7 +69,10 @@ func (d *Deps) handleAlertStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", d.Cfg.CORSAllowedOrigin)
+	// Access-Control-Allow-Origin is already set correctly (matched
+	// against this request's actual Origin) by the cors() middleware
+	// earlier in the chain — overwriting it here with a static value
+	// would break multi-origin support for this one route.
 
 	ch := d.SSEHub.subscribe()
 	defer d.SSEHub.unsubscribe(ch)

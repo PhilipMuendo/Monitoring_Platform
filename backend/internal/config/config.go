@@ -104,8 +104,13 @@ type Config struct {
 	// follows it. Vendor round-trip latency dominates a collection cycle, so
 	// this is the single setting that governs how long one takes.
 	MaxConcurrency    int
-	LogLevel          string
-	CORSAllowedOrigin string
+	LogLevel string
+	// CORSAllowedOrigins is an allow-list, not a single value: a phone on
+	// the LAN and a browser on localhost load the frontend from two
+	// different origins but must both reach the same backend, and a
+	// browser only accepts an exact origin echoed back, never a list or a
+	// wildcard alongside credentialed requests.
+	CORSAllowedOrigins []string
 	// SecureCookies marks the refresh cookie Secure. Defaults to on and
 	// must be explicitly disabled for plain-HTTP local development —
 	// getting this wrong in the safe direction just breaks localhost,
@@ -181,9 +186,9 @@ func Load() (*Config, error) {
 		PollInterval:      getDuration("POLL_INTERVAL", 5*time.Minute),
 		CollectorTimeout:  getDuration("COLLECTOR_TIMEOUT", 0), // 0 = derive from PollInterval
 		MaxConcurrency:    getInt("COLLECTOR_MAX_CONCURRENCY", 10),
-		LogLevel:          getEnv("LOG_LEVEL", "info"),
-		CORSAllowedOrigin: getEnv("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
-		SecureCookies:     getBool("SECURE_COOKIES", true),
+		LogLevel:           getEnv("LOG_LEVEL", "info"),
+		CORSAllowedOrigins: parseOriginList(getEnv("CORS_ALLOWED_ORIGIN", "http://localhost:3000")),
+		SecureCookies:      getBool("SECURE_COOKIES", true),
 		MetricsEnabled:    getBool("METRICS_ENABLED", true),
 		LoginMaxFailures:  getInt("LOGIN_MAX_FAILURES", 8),
 		LoginWindow:       getDuration("LOGIN_FAILURE_WINDOW", 5*time.Minute),
@@ -279,6 +284,21 @@ func Load() (*Config, error) {
 type KeyPair struct {
 	ID     string
 	Secret string
+}
+
+// parseOriginList reads "origin1,origin2" into a slice, trimming
+// whitespace and dropping empty entries so a trailing comma or stray
+// spaces in the env var don't produce a bogus origin that can never match
+// a real request.
+func parseOriginList(v string) []string {
+	var out []string
+	for entry := range strings.SplitSeq(v, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry != "" {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 // parseKeyring reads "id1:secret1,id2:secret2" into retired signing keys.
