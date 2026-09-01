@@ -15,19 +15,10 @@ const mono = JetBrains_Mono({
 });
 
 /**
- * The company name is the tab title; the product name is the subtitle.
- *
- * `template` applies to any route that sets its own `title`. None do today,
- * so every tab currently reads the default — but a tab strip with eight of
- * these open is the case that matters, and putting the company first means the
- * favicon and the first word agree.
- *
- * Icons are file-convention based, not declared here: src/app/icon.svg is the
- * favicon and src/app/apple-icon.png the iOS home-screen icon. Next discovers
- * both and emits the <link> tags, so adding an `icons` key would produce
- * duplicates. The stock create-next-app favicon.ico was REMOVED rather than
- * left in place — while it existed it kept winning /favicon.ico, so the tab
- * showed the Next.js logo no matter what icon.svg contained.
+ * Icons are file-convention based, NOT declared here: src/app/icon.svg is the
+ * favicon and src/app/apple-icon.png the iOS home-screen icon. Next emits the
+ * <link> tags for both, so adding an `icons` key would duplicate them. Do not
+ * reintroduce a favicon.ico — it wins /favicon.ico over icon.svg.
  */
 export const metadata: Metadata = {
   title: {
@@ -39,14 +30,9 @@ export const metadata: Metadata = {
 };
 
 /**
- * Colours the browser/OS chrome around the app.
- *
- * Two values, not one: a single theme-color paints the light-mode brand green
- * behind a dark-mode page, which reads as a rendering fault rather than as
- * branding. These match --brand and the dark page background respectively.
- *
- * viewportFit=cover so the installed app can paint into an iPhone's safe-area
- * insets instead of being letterboxed by white bars.
+ * Colours the browser/OS chrome. Two values, not one — a single theme-color
+ * paints light-mode brand green behind a dark page, which reads as a bug.
+ * These track --brand and the dark page background.
  */
 export const viewport: Viewport = {
   themeColor: [

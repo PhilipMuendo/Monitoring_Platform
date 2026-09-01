@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut, MonitorPlay, Settings } from "lucide-react";
+import { AlertTriangle, LayoutDashboard, LogOut, MonitorPlay, Settings } from "lucide-react";
 
 import { ChatWidget } from "@/components/chat/chat-widget";
 import { BrandLogo } from "@/components/layout/brand-logo";
@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/alerts", label: "Alerts", icon: AlertTriangle },
   { href: "/admin", label: "Admin", icon: Settings, roles: ["admin"] as const },
 ];
 
@@ -44,34 +45,44 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col">
-      {/* The brand's own near-black green, in BOTH themes — it is the
-          company's chrome colour and does not have a light variant, the same
-          way their site runs a dark nav over a white page.
+      {/* Skip link. Every page here puts a nav bar, a theme toggle, a wall
+          button and an account menu ahead of the content, which is a lot to
+          tab past on every navigation. Visually hidden until focused. */}
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-ring"
+      >
+        Skip to main content
+      </a>
+      {/* Brand green in BOTH themes — it is the company's chrome colour and
+          has no light variant. Opaque, not translucent: the 3D flow panel
+          renders on a fixed near-white canvas that smears through a blurred
+          header in dark mode.
 
-          Solid, no backdrop-blur. The old translucent header carried a
-          careful /88 opacity because the 3D flow panel renders on a fixed
-          near-white canvas and smeared through it in dark mode. An opaque
-          surface removes that failure mode rather than tuning around it.
-
-          Everything inside is coloured against this surface explicitly.
-          Scoping a `.dark` class here would have styled the children
-          automatically, but ThemeToggle swaps its icon on that exact class
-          and would have frozen on the moon. */}
+          Children are coloured against this surface explicitly rather than by
+          scoping a `.dark` class here, because ThemeToggle keys its icon off
+          that class and would freeze on the moon. */}
       <header className="sticky top-0 z-40 border-b border-white/10 bg-brand text-brand-foreground">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4">
-          <Link href="/" className="flex items-center gap-2 font-semibold text-white">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-3 sm:gap-4 sm:px-4">
+          <Link href="/" className="flex shrink-0 items-center gap-2 font-semibold text-white">
             <BrandLogo />
           </Link>
 
-          <nav className="flex items-center gap-1">
+          {/* Icon-only below sm, icon+label from sm up: three "icon + word"
+              links plus the logo and avatar overflow a ~375px viewport. The
+              label text is hidden visually but kept in the accessibility tree
+              (see the sr-only span below). */}
+          <nav aria-label="Main" className="flex min-w-0 items-center gap-0.5 sm:gap-1">
             {NAV_LINKS.filter((link) => !link.roles || hasRole(...link.roles)).map((link) => {
               const active = pathname === link.href;
               return (
                 <Link
                   key={link.href}
                   href={link.href}
+                  title={link.label}
+                  aria-current={active ? "page" : undefined}
                   className={cn(
-                    "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:px-3",
                     // White at 15% rather than the brand accent as a fill: the
                     // accent is reserved for things you can act on, and the
                     // current page is not one of them. It marks the active
@@ -81,30 +92,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       : "text-white/70 hover:bg-white/10 hover:text-white",
                   )}
                 >
-                  <link.icon className="size-4" />
-                  {link.label}
+                  <link.icon className="size-4 shrink-0" aria-hidden="true" />
+                  {/* The label is always in the DOM — only its VISIBILITY is
+                      responsive. `hidden sm:inline` removed it from the
+                      accessibility tree below sm, leaving three icon links
+                      with no accessible name on exactly the devices where
+                      `title` never appears. sr-only keeps the name; the icon
+                      still carries the meaning visually. */}
+                  <span className="sr-only sm:not-sr-only sm:inline">{link.label}</span>
                 </Link>
               );
             })}
           </nav>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
             <ThemeToggle className="text-white hover:bg-white/10 hover:text-white" />
 
-            {/* The outline variant resolves its border and text against the
-                page theme, which is wrong on a surface that is dark in both —
-                in light mode it rendered near-black text on near-black
-                green. Stated against the header instead. */}
-            {/* Hidden below xl, which is WallSizeGate's width floor: on a
-                phone this opened a new tab that could only say "too small".
-                CSS is the right tool here and the wrong one for the gate
-                itself — this is a 40-byte anchor, whereas the wall mounts a
-                3D scene, so hiding it must not mean loading it.
+            {/* Colours are stated against the header rather than left to the
+                outline variant, which resolves against the PAGE theme and in
+                light mode put near-black text on near-black green.
 
-                The gate additionally requires a minimum HEIGHT, which has no
-                Tailwind breakpoint. A short-but-wide window therefore still
-                shows this button and lands on the gate — deliberately, since
-                that case is a resizable desktop window, not a device. */}
+                Hidden below xl, WallSizeGate's width floor, so a phone is not
+                offered a tab that can only say "too small". CSS is the right
+                tool for a 40-byte anchor and the wrong one for the gate
+                itself, which must not mount a 3D scene to hide it. The gate
+                also has a height floor with no Tailwind equivalent, so a
+                short-but-wide desktop window still lands on it. */}
             <Button
               variant="outline"
               size="sm"
@@ -112,16 +125,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               className="hidden border-white/25 bg-transparent text-white hover:bg-white/10 hover:text-white xl:inline-flex"
             >
               <a href="/wall" target="_blank" rel="noopener noreferrer">
-                <MonitorPlay className="size-4" />
+                <MonitorPlay className="size-4" aria-hidden="true" />
                 Wall display
+                <span className="sr-only"> (opens in a new tab)</span>
               </a>
             </Button>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-2 rounded-full">
+                {/* The initials are decorative — they are an abbreviation of
+                    a name that is already inside the menu. Without an
+                    explicit label this announced as "PM, button" and gave no
+                    hint that it opens the account menu. */}
+                <button
+                  type="button"
+                  aria-label={user ? `Account menu for ${user.name || user.email}` : "Account menu"}
+                  className="flex items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                >
                   <Avatar className="size-8">
-                    <AvatarFallback className="bg-white/15 text-xs text-white">
+                    <AvatarFallback aria-hidden="true" className="bg-white/15 text-xs text-white">
                       {user ? initials(user.name || user.email) : "?"}
                     </AvatarFallback>
                   </Avatar>
@@ -141,7 +163,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     router.replace("/login");
                   }}
                 >
-                  <LogOut className="size-4" />
+                  <LogOut className="size-4" aria-hidden="true" />
                   Log out
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -150,7 +172,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">{children}</main>
+      <main id="main" tabIndex={-1} className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 focus:outline-none">
+        {children}
+      </main>
 
       <ChatWidget />
     </div>

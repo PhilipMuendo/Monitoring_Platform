@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { apiUrl, getAccessToken, refreshOnce } from "@/lib/api-client";
+import { setStreamConnected } from "@/lib/stream-status";
 import type { Alert } from "@/lib/types";
 
 const RECONNECT_DELAY_MS = 3000;
@@ -41,14 +42,18 @@ export function useAlertStream(enabled: boolean) {
     };
 
     const teardown = () => {
+      setStreamConnected(false);
       if (!es) return;
       es.removeEventListener("alert.created", onCreated);
       es.removeEventListener("alert.resolved", invalidate);
       es.removeEventListener("alert.acknowledged", invalidate);
+      es.removeEventListener("open", onOpen);
       es.removeEventListener("error", onError);
       es.close();
       es = null;
     };
+
+    const onOpen = () => setStreamConnected(true);
 
     // A dropped network connection leaves the browser retrying on its own
     // (readyState CONNECTING) — nothing to do there. But the connect-time
@@ -58,6 +63,11 @@ export function useAlertStream(enabled: boolean) {
     // alerts after the first token expiry until this fix. Refresh the
     // token and open a fresh connection ourselves in that case.
     const onError = () => {
+      // Any error means we are no longer certain the stream is delivering,
+      // including the transient case the browser retries on its own. Resume
+      // normal polling immediately rather than waiting to see whether the
+      // retry succeeds — a stalled stream must not also mean stale data.
+      setStreamConnected(false);
       if (es?.readyState !== EventSource.CLOSED) return;
       teardown();
       if (cancelled) return;
@@ -72,6 +82,10 @@ export function useAlertStream(enabled: boolean) {
       if (!token) return;
 
       es = new EventSource(apiUrl(`/api/v1/alerts/stream?token=${encodeURIComponent(token)}`));
+      // Flips the polling hooks down to their slow safety-net cadence for as
+      // long as the stream is actually delivering. onError below puts them
+      // back to the normal rate the moment it stops.
+      es.addEventListener("open", onOpen);
       es.addEventListener("alert.created", onCreated);
       es.addEventListener("alert.resolved", invalidate);
       es.addEventListener("alert.acknowledged", invalidate);

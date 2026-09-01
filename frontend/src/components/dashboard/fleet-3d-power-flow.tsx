@@ -11,17 +11,12 @@ import { GradientBackdrop, NightSky, ShadowFloor } from "@/components/dashboard/
 import { MODEL_CREDITS } from "@/components/dashboard/scene/model-credits";
 import { GridPylon, PYLON_ANCHOR } from "@/components/dashboard/scene/grid-pylon";
 import {
-  GRID_DROP_X,
   House,
   HOUSE_HUB_ANCHOR,
   HOUSE_LOAD_ANCHOR,
   HUB_LEFT_X,
-  HUB_RIGHT_X,
   HUB_TOP_Y,
-  FACADE_Z,
   ROOF_FRONT_Z,
-  SIDE_X,
-  STOREY_LINE_Y,
   SOLAR_DROP_X,
   SOLAR_PANEL_ANCHOR,
 } from "@/components/dashboard/scene/house";
@@ -41,7 +36,35 @@ import {
 } from "@/lib/scene-camera";
 import type { PowerFlowScene } from "@/lib/power-flow-model";
 import { scalePowerFlowSpeed } from "@/lib/power-flow-scale";
+import { HOUSE_OFFSET_X } from "@/lib/scene-layout";
 import { cn } from "@/lib/utils";
+
+// World-space versions of the house's anchors. house.tsx deliberately
+// exports these LOCAL to the house's own coordinate space (see the long
+// note on HOUSE_OFFSET_X there) because several of them also position
+// meshes INSIDE the house's own group — but every routing waypoint and
+// callout anchor below is a true world-space point, rendered as a SIBLING
+// of the house, not a child of it, so this is the one place that has to
+// add the shared offset back in. Everything past this point uses these
+// _W names, never the raw imports, so there's exactly one place a future
+// anchor could be added and forgotten to offset — right here.
+const HOUSE_HUB_ANCHOR_W: [number, number, number] = [
+  HOUSE_HUB_ANCHOR[0] + HOUSE_OFFSET_X,
+  HOUSE_HUB_ANCHOR[1],
+  HOUSE_HUB_ANCHOR[2],
+];
+const HOUSE_LOAD_ANCHOR_W: [number, number, number] = [
+  HOUSE_LOAD_ANCHOR[0] + HOUSE_OFFSET_X,
+  HOUSE_LOAD_ANCHOR[1],
+  HOUSE_LOAD_ANCHOR[2],
+];
+const SOLAR_PANEL_ANCHOR_W: [number, number, number] = [
+  SOLAR_PANEL_ANCHOR[0] + HOUSE_OFFSET_X,
+  SOLAR_PANEL_ANCHOR[1],
+  SOLAR_PANEL_ANCHOR[2],
+];
+const SOLAR_DROP_X_W = SOLAR_DROP_X + HOUSE_OFFSET_X;
+const HUB_LEFT_X_W = HUB_LEFT_X + HOUSE_OFFSET_X;
 
 // Split out of this chunk on purpose — `postprocessing` is a large library
 // that only the "full" WebGL2 tier can use, and bundling it here made every
@@ -94,130 +117,99 @@ const AmbientOcclusion = lazy(() =>
 // right-angle turns — rather than as smooth curves through open air. See the
 // long note in scene/power-flow-edge-3d.tsx for why.
 //
-// FOUR SERVICES, FOUR FACES. Each run approaches the inverter from its own
-// side, which is what keeps them legible:
+// FOUR SERVICES, FOUR ENTRY POINTS. Each run approaches the inverter from
+// its own side, which is what keeps them legible:
 //
-//   solar   -> TOP    (down from the roof, on the left)
-//   grid    -> RIGHT  (in off the roof run, on the right)
-//   battery -> LEFT   (in from the undercroft cabinet)
-//   load    -> BOTTOM (out and along to the television)
+//   solar   -> TOP            (down from the roof, on the left)
+//   grid    -> LEFT           (in from the pylon, on the left of the house)
+//   battery -> BOTTOM (west)  (up from below, the way a real battery-to-
+//                              inverter DC run is wired — see BATTERY_ROUTE)
+//   load    -> BOTTOM (east)  (out and along to the television)
 //
-// Solar and grid previously ran the other way round: the grid crossed the
-// whole roof to drop at x = -1.05, LEFT of the solar drop at x = -0.3, then
-// doubled back rightward into the hub while solar came leftward into the same
-// hub. The two runs crossed twice — once where the roof run passed the solar
-// take-off, once on the approach — which is what read as criss-crossing. Now
-// the grid's roof run stops at GRID_DROP_X and never travels further left,
-// and the solar drop is the only thing left of it. Their X ranges no longer
-// overlap at all, so no camera angle can make them cross.
+// Battery and load share the bottom face rather than a face each — an
+// inverter only has four sides and TOP/LEFT are already solar/grid's — but
+// they enter at different X offsets either side of hub centre and travel
+// in opposite directions once they're down at skirting level, so the two
+// runs never overlap or read as one thick line. See BATTERY_ENTRY_X below.
+//
+// THE SAFE-Z RULE. The building is solid volume for x in [-1.7, 1.7]
+// (HALF_W) at y = HUB_Y — the undercroft bay to the left of that (down to
+// x = -3.2) is open at ground level, but the main body is not. A run may
+// only travel in X while inside that x-range if z is already >= FACADE_Z
+// (in front of the building) or <= -GROUND_HALF_D (behind it) for the
+// WHOLE of that traversal — otherwise it draws a line straight through the
+// walls. Both routes below do their X-travel while already out at a safe
+// Z (GRID_ROUTE behind, BATTERY_ROUTE in front, since that's where each
+// object now actually stands), and only change Z while still out at an X
+// clear of the building (in the open undercroft/yard), never both against
+// the building at once.
 //
 // The facade's front face is z = 1.025 and the eaves overhang to
-// ROOF_FRONT_Z. Each service gets its own shallow plane proud of the wall:
-// solar and grid must also clear the eaves, since both drop past them.
+// ROOF_FRONT_Z. Solar gets its own shallow plane proud of the wall to clear
+// the eaves it drops past.
 const Z_SOLAR = ROOF_FRONT_Z + 0.035;
-// The grid no longer comes over the roof, so it no longer has to clear the
-// eaves — it sits proud of the FACADE instead, which is 0.08 shallower. Deep
-// enough to stand clear of the shadow-line reveal at the storey line (whose
-// front face is at FACADE_Z + 0.015) without floating off the wall.
-const Z_GRID = FACADE_Z + 0.075;
-/** The grid's plane on the right END wall, mirroring Z_GRID's offset off the front. */
-const X_GRID_SIDE = SIDE_X + 0.05;
-/**
- * Where the service drop lands on the side wall, and the level it lands at.
- *
- * Kept BEHIND the front plane (negative Z) on purpose — that is the whole
- * point of the side route, see GRID_ROUTE. Set at the upper storey rather than
- * at the storey line so the span from the tower stays a shallow ~30° descent
- * instead of the ~50° plunge it becomes if the cable has to reach all the way
- * down to the slab in one go.
- */
-const SIDE_LANDING_Z = -0.55;
-const SIDE_LANDING_Y = 2.15;
-const Z_BATTERY = 1.09;
 const Z_LOAD = 1.05;
 /** Where a run meets the inverter box (0.22 x 0.32, centred on the hub). */
 const HUB_FACE_Z = 1.1;
 /** Hub centre height — the level the two side entries come in at. */
-const HUB_Y = HOUSE_HUB_ANCHOR[1];
+const HUB_Y = HOUSE_HUB_ANCHOR_W[1];
+/**
+ * Bottom face of the inverter box, 0.03 into it — mirrors SOLAR_ROUTE's
+ * `HUB_TOP_Y - 0.03` from above. The box is vertically centred on HUB_Y
+ * (HUB_TOP_Y = HUB_Y + half-height), so its bottom is the same distance
+ * below HUB_Y that HUB_TOP_Y is above it: HUB_Y - (HUB_TOP_Y - HUB_Y).
+ */
+const HUB_BOTTOM_Y = 2 * HUB_Y - HUB_TOP_Y + 0.03;
+/**
+ * Where the battery's run rises into the bottom face — west of hub centre
+ * (HOUSE_HUB_ANCHOR_W[0]), on the same side battery actually stands, and
+ * far enough from LOAD_ROUTE's own straight-down exit at hub centre that
+ * the two bottom entries read as two distinct lines rather than one.
+ */
+const BATTERY_ENTRY_X = HOUSE_HUB_ANCHOR_W[0] - 0.09;
+/** Skirting height both bottom-entry runs travel along, so they read as one shared datum line rather than two unrelated heights. */
+const SKIRT_Y = 0.25;
 
 // Off the panels, forward over the eaves, straight down into the top of the
 // inverter. Three waypoints and a single bend — the solar leg is now the
 // simplest run in the scene, and the whole of it sits left of the grid.
 const SOLAR_ROUTE = [
-  SOLAR_PANEL_ANCHOR,
-  [SOLAR_DROP_X, SOLAR_PANEL_ANCHOR[1], Z_SOLAR],
-  [SOLAR_DROP_X, HUB_TOP_Y - 0.03, Z_SOLAR],
+  SOLAR_PANEL_ANCHOR_W,
+  [SOLAR_DROP_X_W, SOLAR_PANEL_ANCHOR_W[1], Z_SOLAR],
+  [SOLAR_DROP_X_W, HUB_TOP_Y - 0.03, Z_SOLAR],
 ] as const;
 
-// Out of the cabinet under the undercroft, forward clear of it, down to hub
-// height and straight in to the inverter's left face. Entirely within
-// x < -1.4, so it never approaches the glazing the old run crossed.
+// Out of the canopy in front of the house, down to skirting height while
+// still out on the apron (z = BATTERY_ANCHOR's, always >= FACADE_Z so the
+// X-leg that follows can never cross the building's volume — see the
+// SAFE-Z RULE above), in to the entry X, forward to the facade at that
+// same skirting height, then straight up into the inverter's bottom face —
+// the way a real battery-to-inverter DC run is actually wired, rather than
+// sideways into it like the grid/solar legs.
 const BATTERY_ROUTE = [
   BATTERY_ANCHOR,
-  [BATTERY_ANCHOR[0], BATTERY_ANCHOR[1], Z_BATTERY],
-  [BATTERY_ANCHOR[0], HUB_Y, Z_BATTERY],
-  [HUB_LEFT_X, HUB_Y, HUB_FACE_Z],
+  [BATTERY_ANCHOR[0], SKIRT_Y, BATTERY_ANCHOR[2]],
+  [BATTERY_ENTRY_X, SKIRT_Y, BATTERY_ANCHOR[2]],
+  [BATTERY_ENTRY_X, SKIRT_Y, HUB_FACE_Z],
+  [BATTERY_ENTRY_X, HUB_BOTTOM_Y, HUB_FACE_Z],
 ] as const;
 
-// Overhead service drop from the pylon, landing at the building's front-right
-// corner and running left along the STOREY LINE — the floor line between the
-// ground and first storeys — into the inverter's right face.
-//
-// It used to lie along the roof, which solved the right problem the wrong way.
-// The problem was that carried on the facade at an arbitrary height it was a
-// long line suspended in front of the building with nothing behind it; the
-// roof at least gave it a surface. But the roof is the top edge of the
-// composition, so the run drew a second horizontal line above the building
-// and then had to climb back down the full storey height to reach the
-// inverter — a long detour past everything.
-//
-// The storey line is a real surface too, and a better one: see STOREY_LINE_Y
-// in scene/house.tsx for why it is continuous across both wings (reveal band
-// on the closed wing, exposed slab edge across the cutaway) and why it is the
-// one horizontal band on the facade that crosses no glazing. The run is now
-// attached for its whole length, sits in the middle of the elevation instead
-// of on top of it, and arrives at the inverter from one storey up rather than
-// three.
-//
-// IT COMES DOWN THE SIDE, NOT ACROSS THE FRONT. This is the constraint the
-// route exists to satisfy and it is easy to lose.
-//
-// The pylon stands BEHIND the building (z = -1.25) and the inverter is on the
-// FRONT facade. An earlier version landed the span directly on the front plane
-// at z = +1.10, which meant the cable had to get from behind the house to in
-// front of it in one free span — and the only path is straight across the open
-// cutaway. The result was a long diagonal drawn right through the bedroom: the
-// single most obtrusive line in the render, crossing the one part of the scene
-// that is supposed to be showing furniture.
-//
-// So the cable now lands on the right END wall, at a z that is still behind
-// the front plane, and every point of the span stays right of x = 1.7. It
-// therefore cannot cross the building's volume at all. From the bracket it
-// runs down the side wall, forward along it to the front-right corner, and
-// only then turns onto the facade — where it picks up the storey line as
-// before.
-//
-// The first leg is the only one in the scene that moves on all three axes, and
-// that is correct rather than sloppy: it is a free span between a tower and a
-// building, which is exactly what an overhead service drop is. Every leg after
-// it, once the cable is fixed to the structure, is orthogonal.
-//
-// The side legs sit 0.05 proud of the end wall, mirroring the 0.075 the facade
-// legs stand off the front, so the run keeps a constant apparent gap from the
-// building as it turns the corner.
+// Overhead service drop from the pylon (now left of the house, behind it —
+// see grid-pylon.tsx), down to hub height while still out at the pylon's
+// own X (clear of the building entirely, whether over the open undercroft
+// or beyond it — no X-range to worry about), across to the front while
+// still out at that same clear X, then in along the front to the
+// inverter's left face. The middle two legs both move while at an X or Z
+// that's already safe per the SAFE-Z RULE above, so the run can never
+// appear to pass through the house — unlike the very first draft of this
+// route, which swept in X behind the building and then turned to the
+// front INSIDE the building's own footprint. Keep that failure mode in
+// mind if this ever gets "simplified".
 const GRID_ROUTE = [
   PYLON_ANCHOR,
-  // Bracket on the side wall, upper storey, behind the front plane.
-  [X_GRID_SIDE, SIDE_LANDING_Y, SIDE_LANDING_Z],
-  // Down the side wall to the storey line.
-  [X_GRID_SIDE, STOREY_LINE_Y, SIDE_LANDING_Z],
-  // Forward along the side to the front-right corner.
-  [X_GRID_SIDE, STOREY_LINE_Y, Z_GRID],
-  // Round the corner and along the storey line to the service bay.
-  [GRID_DROP_X, STOREY_LINE_Y, Z_GRID],
-  // Down to inverter height, then in to its right face.
-  [GRID_DROP_X, HUB_Y, Z_GRID],
-  [HUB_RIGHT_X, HUB_Y, HUB_FACE_Z],
+  [PYLON_ANCHOR[0], HUB_Y, PYLON_ANCHOR[2]],
+  [PYLON_ANCHOR[0], HUB_Y, HUB_FACE_Z],
+  [HUB_LEFT_X_W, HUB_Y, HUB_FACE_Z],
 ] as const;
 
 // Out of the bottom of the inverter, down to skirting level, along the facade
@@ -225,12 +217,54 @@ const GRID_ROUTE = [
 // the conduit crosses the glass), in through the open corner, then up the
 // partition to the television.
 const LOAD_ROUTE = [
-  HOUSE_HUB_ANCHOR,
-  [HOUSE_HUB_ANCHOR[0], 0.25, Z_LOAD],
-  [HOUSE_LOAD_ANCHOR[0], 0.25, Z_LOAD],
-  [HOUSE_LOAD_ANCHOR[0], 0.25, HOUSE_LOAD_ANCHOR[2]],
-  HOUSE_LOAD_ANCHOR,
+  HOUSE_HUB_ANCHOR_W,
+  [HOUSE_HUB_ANCHOR_W[0], 0.25, Z_LOAD],
+  [HOUSE_LOAD_ANCHOR_W[0], 0.25, Z_LOAD],
+  [HOUSE_LOAD_ANCHOR_W[0], 0.25, HOUSE_LOAD_ANCHOR_W[2]],
+  HOUSE_LOAD_ANCHOR_W,
 ] as const;
+
+// ---------------------------------------------------------------------------
+// Callout anchors — on the ground, not on the house.
+//
+// These used to sit AT each quantity's actual anchor height: Solar up on
+// the roof, Grid up at the pylon's crossarm, Load inside the house at the
+// television. That put the label text overlapping the thing it was meant
+// to be a caption for — a callout floating in front of the roof tiles, or
+// worse, "Load" rendering inside the walls of the house itself, since its
+// real anchor is a point of furniture in a room.
+//
+// A callout is a caption, not a hologram bolted to the equipment — so
+// these sit as small plates on open ground near each object's base
+// instead, at the same fixed low height, and each keeps that object's own
+// horizontal (X, Z) position so it still reads as belonging to it.
+// PowerFlowCallout3D's "top" placement (text above a short rising stem)
+// does the rest: the stem points up toward the object without needing to
+// literally span the real-world height gap up to a roof or a crossarm.
+//
+// Solar and Load both have their real anchor INSIDE the building's
+// footprint in plan (the roof overhangs the walls; the television sits in
+// a room), so their ground point can't just be "the same X/Z at Y = 0" —
+// that would put the plate under the floor slab. Both are nudged out to
+// just past the front facade instead, onto the open apron/lawn, while
+// keeping the anchor's original X (or, for Load, the television's own X,
+// not the inverter's — see below) so each stays visually near its object.
+// Ground-plate labels (previous approach) put four independent text blocks
+// on the same patch of open ground, and no amount of nudging kept them
+// from overlapping once two objects' ground points projected close
+// together on screen — that's what the "this looks horrible" screenshot
+// caught happening between Solar and Battery.
+//
+// Replaced with a plain reference pattern instead: each label sits at the
+// TOP or BOTTOM margin of the frame — sky for Solar/Grid/Load, the ground
+// strip below the compound for Battery — connected to its real object by a
+// single straight dashed line. Labels only collide if their objects are
+// close together on screen AND on the same side (top vs. bottom); spread
+// across three top positions (roof, pylon, indoor unit) and one bottom
+// position (battery), that doesn't happen. No projected ground point to
+// compute or fight with.
+const CALLOUT_LEADER = 190;
+const BATTERY_LEADER = 170;
 
 // Frames the scene, re-fitting it whenever the canvas is resized.
 //
@@ -548,22 +582,20 @@ export function PowerFlowScene3D({ scene, className }: { scene: PowerFlowScene; 
           color={ACCENTS.load}
         />
 
-        {/* Dashed-line callouts. Leader lengths are computed per frame from
-            each anchor's projected position, so all four labels land on one
-            screen baseline regardless of camera framing — no per-callout
-            pixel tuning here. */}
-        {/* offsetX values de-collide the four labels on the shared baseline.
-            The battery's "charging 33.1 kW" sublabel is the widest block of
-            the four, so left to themselves they overlap.
-
-            Solar and Battery need much more separation than they used to:
-            moving the inverter into the left service bay took the solar
-            anchor from x = -0.3 to x = -1.36, so it now sits only ~0.56 world
-            units from the battery at -1.92 instead of ~1.6. They are pushed
-            apart rather than nudged. These are screen-space pixels against a
-            zoom that varies with panel size, so they are the one thing here
-            most likely to want a nudge once it is seen at real wall scale. */}
-        <PowerFlowCallout3D anchor={SOLAR_PANEL_ANCHOR} label="Solar" value={formatPower(solarW)} color={ACCENTS.solar} ink={lighting.ink} offsetX={30} />
+        {/* Dashed-line callouts: a straight leader from the real object up
+            to a label near the top of the frame (sky), or down to one near
+            the bottom (ground strip), rather than a text block hovering
+            beside the object itself — see the note on CALLOUT_LEADER
+            above for why this replaced the ground-plate approach. */}
+        <PowerFlowCallout3D
+          anchor={SOLAR_PANEL_ANCHOR_W}
+          label="Solar"
+          value={formatPower(solarW)}
+          color={ACCENTS.solar}
+          ink={lighting.ink}
+          placement="top"
+          leaderLength={CALLOUT_LEADER}
+        />
         <PowerFlowCallout3D
           anchor={PYLON_ANCHOR}
           label="Grid"
@@ -571,14 +603,17 @@ export function PowerFlowScene3D({ scene, className }: { scene: PowerFlowScene; 
           sublabel={grid.note ?? undefined}
           color={ACCENTS.grid}
           ink={lighting.ink}
+          placement="top"
+          leaderLength={CALLOUT_LEADER}
         />
         <PowerFlowCallout3D
-          anchor={[HOUSE_LOAD_ANCHOR[0], HOUSE_LOAD_ANCHOR[1] + 0.2, HOUSE_LOAD_ANCHOR[2]]}
+          anchor={HOUSE_LOAD_ANCHOR_W}
           label="Load"
           value={formatPower(loadW)}
           color={ACCENTS.load}
           ink={lighting.ink}
-          offsetX={46}
+          placement="top"
+          leaderLength={CALLOUT_LEADER}
         />
         <PowerFlowCallout3D
           anchor={BATTERY_ANCHOR}
@@ -591,7 +626,8 @@ export function PowerFlowScene3D({ scene, className }: { scene: PowerFlowScene; 
           }
           color={ACCENTS.battery}
           ink={lighting.ink}
-          offsetX={-70}
+          placement="bottom"
+          leaderLength={BATTERY_LEADER}
         />
 
         {/* Withdraws the AO pass if this device cannot sustain a reasonable

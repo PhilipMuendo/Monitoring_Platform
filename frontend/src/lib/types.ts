@@ -126,6 +126,14 @@ export interface SitePage {
   offset: number;
 }
 
+// Mirrors backend/internal/storage/alerts.go's HistoryPage.
+export interface AlertHistoryPage {
+  alerts: Alert[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface HealthResponse {
   // "unhealthy" is served with HTTP 503 and was missing from this union, so
   // the one status that means "stop routing traffic here" did not typecheck.

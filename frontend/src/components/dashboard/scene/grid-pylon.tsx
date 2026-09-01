@@ -5,13 +5,17 @@ import * as THREE from "three";
 
 import { STUDIO } from "@/lib/power-flow-colors";
 
-// Set back behind the house (negative Z) as well as to the right, so the
-// tower never crosses in front of the sectioned rooms.
-// Pulled in from x = 2.9. The free span from the crossarm to the building was
-// the longest single stroke in the render and read as one huge line across the
-// composition; shortening it also tightens the scene's overall width, which
-// buys camera zoom for everything else.
-export const PYLON_POSITION: [number, number, number] = [2.7, 0, -1.25];
+// Moved to the LEFT of the house (negative X) and set back behind it
+// (negative Z), so the tower reads unambiguously as "grid, on the left" —
+// matching the requested layout — while staying clear of both the
+// sectioned rooms in front and the undercroft bay it now stands beyond.
+// The undercroft's outer edge is at x = -3.2 (UNDERCROFT_OUTER in
+// house.tsx); -4.4 clears it with room for the tower's own footprint.
+// z = -1.1 keeps it (and the whole GRID_ROUTE run in
+// fleet-3d-power-flow.tsx) safely behind the building's back face at
+// z = -1.025, so the approach route can never appear to pass through the
+// house — see the routing note there for why that matters.
+export const PYLON_POSITION: [number, number, number] = [-4.4, 0, -1.1];
 
 // Raised from 2.3. The service drop attaches at the crossarm, and at the old
 // height that attachment sat 0.6 BELOW the roof it feeds — so the span

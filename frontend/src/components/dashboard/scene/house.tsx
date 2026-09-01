@@ -4,6 +4,7 @@ import { RoundedBox } from "@react-three/drei";
 
 import { Bedroom, LivingRoom } from "@/components/dashboard/scene/interior";
 import { STUDIO } from "@/lib/power-flow-colors";
+import { HOUSE_OFFSET_X } from "@/lib/scene-layout";
 
 // A two-storey house rendered as a doll's-house section: the front wall is
 // removed from the right wing so you see into a furnished living room and
@@ -37,6 +38,19 @@ const WALL_TOP = GROUND_H + UPPER_H; // 2.55
 
 const HALF_W = W / 2;
 const GROUND_HALF_D = GROUND_D / 2;
+
+// HOUSE_OFFSET_X (shared — see lib/scene-layout.ts) is applied ONLY to the
+// House group's own position, below — every constant exported from this
+// file (HOUSE_HUB_ANCHOR, HUB_LEFT_X, SOLAR_DROP_X, SOLAR_PANEL_ANCHOR,
+// HOUSE_LOAD_ANCHOR, ...) stays in the house's LOCAL coordinate space,
+// unshifted, on purpose: several of them (HOUSE_HUB_ANCHOR chief among
+// them) are also used to position meshes INSIDE this same group, so
+// baking the offset into the constant would shift those meshes TWICE —
+// once from their own now-offset value, once again from the group's
+// position. fleet-3d-power-flow.tsx, which uses these anchors as true
+// world-space points for routing and callouts (as a SIBLING of this
+// group, not a child of it), is the one place that needs to add the
+// offset back in at the point of use.
 
 // The section plane. Right of this X the front wall is omitted; left of it
 // the facade is intact and glazed.
@@ -79,7 +93,14 @@ const UNDERCROFT_OUTER = -HALF_W - UNDERCROFT_W; // -3.2
 const UNDERCROFT_D = UPPER_D;
 const UNDERCROFT_Z = (GROUND_D - UPPER_D) / 2;
 
-/** Where the car parks — inside the bay, under the overhang. */
+/**
+ * Where the car parks — inside the bay, under the overhang. Unused today
+ * (see fleet-3d-power-flow.tsx's note on the removed car.glb).
+ *
+ * Local to the House group, like every other export in this file — see
+ * the note on HOUSE_OFFSET_X below for why these stay local rather than
+ * baking the offset in here.
+ */
 export const CARPORT_POSITION: [number, number, number] = [UNDERCROFT_CENTRE, 0, UNDERCROFT_Z + 0.12];
 
 // How the furnished rooms are seated inside the cutaway wing. Declared here
@@ -539,7 +560,7 @@ function Undercroft() {
 
 export function House({ loadActive = false }: { loadActive?: boolean }) {
   return (
-    <group>
+    <group position={[HOUSE_OFFSET_X, 0, 0]}>
       {/* --- Open bay at the left end, upper storey oversailing --- */}
       <Undercroft />
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Sun, TrendingDown, TrendingUp } from "lucide-react";
 
 import { FleetDayCurve } from "@/components/dashboard/fleet-day-curve";
@@ -484,13 +484,20 @@ function WallDisplay() {
 
 export default function WallPage() {
   return (
+    // This route mounts RequireAuth itself rather than inheriting the (app)
+    // layout, so it needs its own Suspense boundary: RequireAuth reads
+    // useSearchParams to remember the return destination, and without a
+    // boundary that opts the page out of prerendering and fails the build.
+    //
     // RequireAuth is OUTSIDE the size gate on purpose: a signed-out visitor on
     // a phone should be sent to the login page like anywhere else, not told
     // their screen is too small for a page they cannot see either way.
-    <RequireAuth>
-      <WallSizeGate>
-        <WallDisplay />
-      </WallSizeGate>
-    </RequireAuth>
+    <Suspense fallback={<div className="min-h-screen bg-background" />}>
+      <RequireAuth>
+        <WallSizeGate>
+          <WallDisplay />
+        </WallSizeGate>
+      </RequireAuth>
+    </Suspense>
   );
 }

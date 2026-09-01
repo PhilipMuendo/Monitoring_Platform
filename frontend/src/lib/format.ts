@@ -58,12 +58,27 @@ export function formatDayLabel(value: string | number): string {
   return new Date(value).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
 
-/** Date + time, for tooltips on a time axis where the day may not be obvious. */
+/**
+ * Date + time, for tooltips on a time axis and for the alert record.
+ *
+ * Carries the timezone abbreviation, which it previously did not. The fleet
+ * is distributed and the people reading it are not all in one place, so a
+ * bare "14:32" is ambiguous the moment two of them discuss the same alert:
+ * each browser rendered the instant in its own local zone and neither string
+ * said so. Adding the short zone name makes the reading self-describing at
+ * the cost of four characters.
+ *
+ * `timeZoneName: "short"` resolves against the viewer's own zone, so a
+ * technician in Nairobi reads EAT and a reviewer elsewhere reads theirs —
+ * both correct, and now both labelled.
+ */
 export function formatDateTime(value: string | number): string {
   const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
   return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${d.toLocaleTimeString("en-GB", {
     hour: "2-digit",
     minute: "2-digit",
+    timeZoneName: "short",
   })}`;
 }
 

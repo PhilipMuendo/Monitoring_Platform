@@ -5,6 +5,7 @@ import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
 import { STUDIO } from "@/lib/power-flow-colors";
+import { HOUSE_OFFSET_X } from "@/lib/scene-layout";
 
 // The site the house stands in: a lawn, a paved drive and apron, and the
 // compound's dusk-to-dawn security lighting.
@@ -509,7 +510,12 @@ function SecurityLights({ lit }: { lit: boolean }) {
  */
 export function Compound({ securityLights }: { securityLights: boolean }) {
   return (
-    <group>
+    // HOUSE_OFFSET_X (see lib/scene-layout.ts): the house itself shifts by
+    // the same amount via its own group position in house.tsx — the lawn,
+    // apron, drive, path and lamp posts here all move with it so the
+    // paving stays under the building it was laid for, rather than
+    // floating wherever it used to be relative to the pre-shift house.
+    <group position={[HOUSE_OFFSET_X, 0, 0]}>
       <Lawn />
       <Slab position={APRON.position} size={APRON.size} />
       <Slab position={DRIVE.position} size={DRIVE.size} />

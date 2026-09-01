@@ -1,5 +1,21 @@
 import path from "node:path";
+import bundleAnalyzer from "@next/bundle-analyzer";
 import type { NextConfig } from "next";
+
+/**
+ * `ANALYZE=true npm run build` writes a treemap of every client chunk to
+ * .next/analyze.
+ *
+ * Worth having wired up permanently: this app carries three.js, drei,
+ * postprocessing, recharts and framer-motion, and the two things keeping the
+ * initial payload sane — the single dynamic boundary around Recharts, and the
+ * one shared scene chunk — are both invariants that a stray static import
+ * silently breaks. Without a way to look, the regression is invisible until
+ * someone on a slow connection complains.
+ */
+const withBundleAnalyzer = bundleAnalyzer({
+  enabled: process.env.ANALYZE === "true",
+});
 
 const nextConfig: NextConfig = {
   // Pin the workspace root explicitly — otherwise Next.js walks up and
@@ -35,4 +51,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withBundleAnalyzer(nextConfig);

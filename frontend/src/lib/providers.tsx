@@ -17,8 +17,22 @@ export function Providers({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 30_000,
-            refetchOnWindowFocus: false,
+            // Well under the polling cadence on purpose. When staleTime
+            // equalled refetchInterval every scheduled poll was also a cache
+            // miss, so nothing was ever served warm — a remount during a
+            // route change refetched from scratch instead of painting the
+            // data it already had. 10s keeps navigation instant while
+            // guaranteeing anything older than that is refreshed.
+            staleTime: 10_000,
+            // ON, deliberately — this is a monitoring dashboard. Refocus is
+            // the strongest available signal that someone wants to know the
+            // fleet's state right now; leaving it off meant tabbing back
+            // after a break and reading data up to 30s old (up to 5 minutes
+            // for the day curve) with nothing on screen saying so.
+            refetchOnWindowFocus: true,
+            // Reconnecting after the laptop wakes or the LAN drops is the
+            // other moment the cache is guaranteed to be wrong.
+            refetchOnReconnect: true,
             retry: 1,
           },
         },

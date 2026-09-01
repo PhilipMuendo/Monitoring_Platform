@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { Loader2 } from "lucide-react";
 import { memo } from "react";
 
+import { ErrorBoundary } from "@/components/error-boundary";
 import { PowerFlowSkeleton } from "@/components/dashboard/power-flow-skeleton";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import type { PowerFlowViewMode } from "@/hooks/use-power-flow-view-mode";
@@ -15,36 +16,24 @@ import { cn } from "@/lib/utils";
 
 /**
  * Height of the flow panel. Shared by the 2D view, the 3D canvas and the
- * loading skeleton so switching modes (or finishing a load) never resizes
- * the panel and reflows the page beneath it.
+ * loading skeleton so switching modes never resizes the panel and reflows
+ * the page beneath it.
  *
- * Brought back down from 520/600. Making the panel taller turned out not to
- * make the scene bigger: at a typical dashboard card width the camera fit is
- * bound by WIDTH, not height, so the extra height bought nothing but a dead
- * band under the building. The scene projects about 5.7 world units tall, so
- * past ~460px at this width every additional pixel is empty. Apparent size
- * comes from the geometry and from the panel getting WIDER, not taller. The xl
- * step still pays off because the card is wide enough there for the fit to
- * become height-bound.
+ * Do not raise these without widening the card too: at typical card widths
+ * the camera fit is bound by WIDTH, so extra height is dead space under the
+ * building. The xl step pays off only because the card is wide enough there
+ * for the fit to become height-bound.
  */
 export const POWER_FLOW_BOX = "h-[380px] sm:h-[440px] xl:h-[520px]";
 
-// dynamic(..., { ssr: false }) keeps the whole WebGL scene out of the server
-// render pass and out of the server bundle entirely, not just unrendered on
-// first paint. Must be called from a Client Component.
+// ssr:false keeps the WebGL scene out of the server bundle entirely, not
+// merely unrendered on first paint.
 //
-// The import() is written out in full here rather than delegated to
-// use-scene-3d.ts, even though that module imports the same specifier to warm
-// it. Next's transform reads the module path straight out of this arrow
-// function to apply ssr:false; indirecting it through a helper hides it from
-// that analysis. Two literal import()s of one specifier resolve to one module
-// and one chunk in the client graph, so warming it there genuinely warms this
-// — and, now that every site page mounts this too, ONE chunk serves the whole
-// app rather than one per surface.
-//
-// By the time this component mounts the chunk is normally already resolved, so
-// the `loading` slot is effectively unreachable — it stays as the honest
-// fallback if that ever stops holding.
+// The import() must be written out in full here rather than delegated to
+// use-scene-3d.ts: Next reads the module path straight out of this arrow
+// function, and indirecting it hides it from that analysis. Two literal
+// import()s of one specifier still resolve to a single shared chunk, so the
+// warm-up in use-scene-3d genuinely warms this one.
 const PowerFlowScene3D = dynamic(
   () => import("@/components/dashboard/fleet-3d-power-flow").then((m) => m.PowerFlowScene3D),
   {
@@ -185,15 +174,10 @@ export const PowerFlowView = memo(function PowerFlowView({
     return <>{renderFallback(className)}</>;
   }
 
-  // 2D FIRST, 3D WHEN IT ARRIVES.
-  //
-  // This slot used to show a skeleton until the WebGL bundle finished
-  // downloading — several seconds on a first visit, with no information on
-  // screen the whole time, even though every number the 2D diagram draws was
-  // already in hand. Now the 2D view carries the wait and the 3D scene
-  // replaces it once its chunk is resolved. It is also what makes a scene on
-  // every site page cheap: the panel is never empty, so the mount cost of a
-  // fresh WebGL context is hidden rather than stared at.
+  // 2D FIRST, 3D WHEN IT ARRIVES. The 2D diagram carries the wait rather than
+  // a skeleton, because every number it draws is already in hand. This is also
+  // what makes a scene on every site page cheap: the panel is never empty, so
+  // a fresh WebGL context's mount cost is hidden rather than stared at.
   if (tier === null || scene3D !== "ready") {
     return (
       <TwoDWithSceneNote
@@ -207,5 +191,20 @@ export const PowerFlowView = memo(function PowerFlowView({
   // Fades rather than cuts. The 2D diagram unmounts in the same commit, and a
   // hard swap between two quite different pictures reads as a glitch; the
   // dissolve also covers the canvas's first-frame shader compilation.
-  return <PowerFlowScene3D scene={scene} className={cn(className, "animate-in fade-in duration-500")} />;
+  //
+  // Wrapped in an error boundary because the WebGL subtree is the largest
+  // and least predictable thing the app mounts — a lost context, a driver
+  // fault or a bad geometry prop would otherwise propagate to the route
+  // boundary and take the whole dashboard down with it. Degrading to the 2D
+  // diagram keeps every number on screen, which is what the panel is for.
+  return (
+    <ErrorBoundary
+      resetKey={scene}
+      fallback={
+        <TwoDWithSceneNote renderFallback={renderFallback} className={className} note="failed" />
+      }
+    >
+      <PowerFlowScene3D scene={scene} className={cn(className, "animate-in fade-in duration-500")} />
+    </ErrorBoundary>
+  );
 });

@@ -5,18 +5,23 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
 import { STUDIO } from "@/lib/power-flow-colors";
+import { HOUSE_OFFSET_X } from "@/lib/scene-layout";
 
-// Sits inside the undercroft, tucked against the main body's left wall and
-// toward the open face so it stays visible from the front-right camera.
-// Wall-adjacent battery storage under cover is where these actually live, and
-// both reference renders place it exactly there rather than freestanding on
-// open ground.
+// Moved out of the undercroft to stand in front of the house, on the
+// paved apron that used to serve as the carport approach (compound.tsx's
+// APRON spans x [-3.4, -1.5], z [-0.8, 2.6] before HOUSE_OFFSET_X — this
+// sits well inside it). Kept at the same local x = -2.0 as before so it
+// stays clear of the glazed wing's wall for the same reason it always
+// was; only z moved, from 0.72 (tucked under the building) out to 2.0
+// (out on the apron, clearly in front). Since it's no longer under the
+// building's own cantilever it now carries its own shade canopy — see
+// BatteryCanopy below — rather than relying on the undercroft's cover.
 //
-// Nudged left from x = -1.92. The stack is 0.50 wide, and centred at -1.92 its
-// right edge landed at -1.67 — 0.03 INSIDE the glazed wing's left wall at
-// -1.7, so the cabinet was intersecting the building. -2.0 clears it by 0.05
-// and stays well within the undercroft, which runs from -3.2 to -1.7.
-export const BATTERY_POSITION: [number, number, number] = [-2.0, 0, 0.72];
+// + HOUSE_OFFSET_X (see lib/scene-layout.ts): the house and its paving
+// (compound.tsx) both shift by this same amount, and the battery has to
+// move with them to stay standing on the apron rather than being left
+// behind on bare lawn.
+export const BATTERY_POSITION: [number, number, number] = [-2.0 + HOUSE_OFFSET_X, 0, 2.0];
 
 // ---------------------------------------------------------------------------
 // A stacked modular home battery, in the shape the market has settled on: a
@@ -64,10 +69,26 @@ const STACK_BOTTOM = PLINTH_H;
 const STACK_TOP = STACK_BOTTOM + (MODULE_COUNT - 1) * MODULE_PITCH + MODULE_H;
 const HEAD_Y = STACK_TOP + MODULE_GAP + HEAD_H / 2;
 
-// Total height is ~1.175. The undercroft soffit — the underside of the
-// oversailing upper storey — is at GROUND_H = 1.3, so the stack fills the bay
-// the way the reference product fills a plant room and still clears it. If the
-// module count or pitch changes, that 1.3 is the ceiling to check against.
+// Total height is ~1.175.
+
+// ---------------------------------------------------------------------------
+// Shade canopy. Freestanding now that the stack has moved out from under the
+// building's own cover — four slender posts and a flat roof, distinct from
+// both the house (which is solid-walled) and the undercroft it replaces (which
+// was a recess IN the building), so the battery reads as its own small
+// structure rather than an appendage of either.
+//
+// Sized off the plinth's own footprint (the widest part of the stack)
+// plus a fixed margin, rather than a hand-guessed constant, so it keeps
+// covering the battery if PLINTH_W/PLINTH_D ever change. Clearance above
+// the stack (POST_H vs. the ~1.175 total stack height computed below) is
+// generous on purpose: a canopy that just grazes the control head reads
+// as a lid, not a roof.
+const CANOPY_MARGIN = 0.32;
+const CANOPY_W = PLINTH_W + CANOPY_MARGIN * 2;
+const CANOPY_D = PLINTH_D + CANOPY_MARGIN * 2;
+const POST_H = 1.55;
+const ROOF_T = 0.05;
 
 /** Where the battery conduit leaves — at the control head, as it does in reality. */
 export const BATTERY_ANCHOR: [number, number, number] = [BATTERY_POSITION[0], 1.12, BATTERY_POSITION[2]];
@@ -118,6 +139,32 @@ export function BatteryPack({ accentColor, soc }: BatteryPackProps) {
 
   return (
     <group position={BATTERY_POSITION}>
+      {/* Shade canopy. Posts at the four corners of the footprint, a flat
+          roof slab on top — deliberately the plainest possible shelter so it
+          reads as "cover for the equipment" and never competes with the
+          house's own roofline for attention. */}
+      {[
+        [-CANOPY_W / 2, -CANOPY_D / 2],
+        [CANOPY_W / 2, -CANOPY_D / 2],
+        [-CANOPY_W / 2, CANOPY_D / 2],
+        [CANOPY_W / 2, CANOPY_D / 2],
+      ].map(([x, z]) => (
+        <mesh key={`${x}-${z}`} position={[x, POST_H / 2, z]} castShadow>
+          <boxGeometry args={[0.045, POST_H, 0.045]} />
+          <meshStandardMaterial color={STUDIO.metalDark} roughness={0.55} metalness={0.25} />
+        </mesh>
+      ))}
+      <RoundedBox
+        args={[CANOPY_W + 0.1, ROOF_T, CANOPY_D + 0.1]}
+        radius={0.015}
+        smoothness={3}
+        position={[0, POST_H + ROOF_T / 2, 0]}
+        castShadow
+        receiveShadow
+      >
+        <meshStandardMaterial color={STUDIO.wallSide} roughness={0.7} metalness={0.02} />
+      </RoundedBox>
+
       {/* Floor plinth. The one grey element — every stack of this type sits on
           a darker base, and it also stops the white column reading as if it
           were floating on the white paving. */}

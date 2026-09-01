@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api-client";
+import { useLiveRefetchInterval } from "@/lib/stream-status";
 import type { SitePage, SiteWithStatus } from "@/lib/types";
 
 /**
@@ -24,6 +25,7 @@ export function useSites(opts: { all?: boolean; limit?: number; offset?: number 
 
 export function useSitePage(opts: { all?: boolean; limit?: number; offset?: number } = {}) {
   const { all = false, limit, offset } = opts;
+  const refetchInterval = useLiveRefetchInterval();
 
   const params = new URLSearchParams();
   if (all) params.set("all", "true");
@@ -34,15 +36,16 @@ export function useSitePage(opts: { all?: boolean; limit?: number; offset?: numb
   return useQuery({
     queryKey: ["sites", all, limit ?? null, offset ?? null],
     queryFn: () => api.get<SitePage>(`/api/v1/sites${qs ? `?${qs}` : ""}`),
-    refetchInterval: 30_000,
+    refetchInterval,
   });
 }
 
 export function useSite(id: string | undefined) {
+  const refetchInterval = useLiveRefetchInterval();
   return useQuery({
     queryKey: ["site", id],
     queryFn: () => api.get<SiteWithStatus>(`/api/v1/sites/${id}`),
     enabled: !!id,
-    refetchInterval: 30_000,
+    refetchInterval,
   });
 }

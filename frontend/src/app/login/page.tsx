@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { AlertCircle, Eye, EyeOff, Loader2, Lock, Mail, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { safeRedirect } from "@/lib/safe-redirect";
 
 // Split-screen sign-in: photography on the left, form on the right.
 //
@@ -39,9 +40,14 @@ import { useAuth } from "@/lib/auth-context";
 const LOGIN_IMAGE_BLUR =
   "data:image/webp;base64,UklGRnwAAABXRUJQVlA4IHAAAADwAwCdASoUAAwAPu1iqU2ppaOiMAgBMB2JagCdEf/gOwSrG6PIrvj+AP7ZfPWnaNNok9YdBrM+/RJG6aGim2Kt+SKFr6EUOe7rtp9rRKQdhSm/jwLUaV4gkr4rAKBF9Q1VxkCNwGkC2pw8JuNcAAAA";
 
-export default function LoginPage() {
+function LoginScreen() {
   const { status, login } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Where RequireAuth wanted to send them before the session ran out.
+  // safeRedirect rejects anything that is not a same-origin path, so a
+  // crafted ?next= cannot bounce a just-authenticated user off-site.
+  const next = safeRedirect(searchParams.get("next"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -49,8 +55,8 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (status === "authenticated") router.replace("/");
-  }, [status, router]);
+    if (status === "authenticated") router.replace(next);
+  }, [status, router, next]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,7 +64,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(email, password);
-      router.replace("/");
+      router.replace(next);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to log in");
     } finally {
@@ -273,5 +279,16 @@ export default function LoginPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  // useSearchParams needs a Suspense boundary above it. The fallback is the
+  // page's own background so the transition is invisible rather than a flash
+  // of white on a dark screen.
+  return (
+    <Suspense fallback={<div className="dark min-h-screen bg-brand" />}>
+      <LoginScreen />
+    </Suspense>
   );
 }

@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { Suspense } from "react";
 import { ArrowLeft, Battery, CalendarDays, Gauge, MapPin, Sun, TrendingUp, Zap } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,17 +33,22 @@ const SiteHistoryCharts = dynamic(
   { ssr: false, loading: () => <Skeleton className="h-[300px] w-full" /> },
 );
 import { SiteAlertsList } from "@/components/site/site-alerts-list";
+import { SkeletonList } from "@/components/skeleton-list";
+import { useEnumQueryParam } from "@/hooks/use-query-param";
 import { usePowerFlowViewMode } from "@/hooks/use-power-flow-view-mode";
 import { useSiteHistory } from "@/hooks/use-site-history";
 import { useSite } from "@/hooks/use-sites";
 import { formatCapacity, formatEnergy, formatPercent, formatPower, formatRelativeTime } from "@/lib/format";
 import { socTextClass } from "@/lib/soc-color";
 
-type Range = "24h" | "7d" | "30d";
+const RANGES = ["24h", "7d", "30d"] as const;
+type Range = (typeof RANGES)[number];
 
-export default function SiteDetailPage() {
+function SiteDetail() {
   const { id } = useParams<{ id: string }>();
-  const [range, setRange] = useState<Range>("24h");
+  // In the URL rather than useState so a refresh keeps the range, and so a
+  // link pasted into chat opens on the window the sender was looking at.
+  const [range, setRange] = useEnumQueryParam<Range>("range", RANGES, "24h");
   // The same stored 2D/3D preference the dashboard and wall use. Read-only
   // here: one toggle for the whole app is less confusing than a per-page one,
   // and it means someone who chose 2D once is not asked again on every site.
@@ -54,10 +59,11 @@ export default function SiteDetailPage() {
 
   if (siteLoading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-80 w-full" />
+      <div role="status" className="space-y-4">
+        <span className="sr-only">Loading site</span>
+        <Skeleton className="h-8 w-64" aria-hidden="true" />
+        <Skeleton className="h-32 w-full" aria-hidden="true" />
+        <Skeleton className="h-80 w-full" aria-hidden="true" />
       </div>
     );
   }
@@ -66,7 +72,7 @@ export default function SiteDetailPage() {
     return (
       <div className="space-y-4">
         <Link href="/" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:underline">
-          <ArrowLeft className="size-4" /> Back to dashboard
+          <ArrowLeft className="size-4" aria-hidden="true" /> Back to dashboard
         </Link>
         <p className="text-sm text-muted-foreground">Couldn&apos;t load this site. It may have been removed.</p>
       </div>
@@ -77,7 +83,7 @@ export default function SiteDetailPage() {
     <div className="space-y-6">
       <div>
         <Link href="/" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:underline">
-          <ArrowLeft className="size-4" /> Back to dashboard
+          <ArrowLeft className="size-4" aria-hidden="true" /> Back to dashboard
         </Link>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <h1 className="text-2xl font-semibold">{site.name}</h1>
@@ -85,7 +91,7 @@ export default function SiteDetailPage() {
           <StatusBadge status={site.status} />
         </div>
         <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
-          <MapPin className="size-3.5" />
+          <MapPin className="size-3.5" aria-hidden="true" />
           {site.location} · {formatCapacity(site.capacity_kw)} capacity · last seen {formatRelativeTime(site.last_seen_at)}
         </p>
       </div>
@@ -149,7 +155,9 @@ export default function SiteDetailPage() {
           site-power-flow-view.tsx. */}
       <Card>
         <CardHeader>
-          <CardTitle>Power Flow</CardTitle>
+          <CardTitle asChild>
+            <h2>Power Flow</h2>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <SitePowerFlowView site={site} mode={mode} className="h-[320px] sm:h-[380px] xl:h-[440px]" />
@@ -158,7 +166,9 @@ export default function SiteDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Power History</CardTitle>
+          <CardTitle asChild>
+            <h2>Power History</h2>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <Tabs value={range} onValueChange={(v) => setRange(v as Range)}>
@@ -182,5 +192,14 @@ export default function SiteDetailPage() {
 
       <SiteAlertsList siteId={site.id} />
     </div>
+  );
+}
+
+export default function SiteDetailPage() {
+  // useEnumQueryParam reads useSearchParams, which needs a boundary above it.
+  return (
+    <Suspense fallback={<SkeletonList count={3} className="h-32" label="Loading site" gap="space-y-4" />}>
+      <SiteDetail />
+    </Suspense>
   );
 }
